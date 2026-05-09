@@ -1,4 +1,5 @@
 // 文件作用：前端 API client + 类型定义
+// 版本：v0.5.1 — 加 listHolidays（系统信息页展示节假日日期）
 // 版本：v0.5.0 — Prompt 改原地编辑：去掉 create/activate/delete，加 updatePrompt；加 listShops
 // 版本：v0.4.0 — RunSummary/RunDetail 加 scope 字段；triggerRun body 加 scope_type/scope_id
 
@@ -61,6 +62,14 @@ export type Prompt = {
   updated_at: string;
 };
 
+export type Holiday = {
+  id: number;
+  name: string;
+  year: number;
+  start_date: string | null;
+  end_date: string | null;
+};
+
 export type Shop = {
   shop_id: number;
   shop_name: string;
@@ -88,6 +97,7 @@ export const api = {
   models: () => http<{ default: string; supported: string[] }>("/api/models"),
   regions: () => http<{ regions: Record<string, string>; super_regions: Record<string, number[]> }>("/api/regions"),
   listShops: () => http<{ shops: Shop[] }>("/api/shops"),
+  listHolidays: () => http<{ holidays: Holiday[] }>("/api/holidays"),
 
   listRuns: () => http<RunSummary[]>("/api/runs"),
   getRun: (id: number) => http<RunDetail>(`/api/runs/${id}`),
