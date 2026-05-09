@@ -1,9 +1,9 @@
 // 文件作用：Dashboard 首页 — 概览 + 触发表单 + 最近 runs
-// 版本：v0.1.0
+// 版本：v0.3.0 — Prompt 下拉去掉"留空"项，默认选中当前生产版本
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { fmtDate, fmtNum, statusColor } from "@/lib/utils";
@@ -14,12 +14,38 @@ export default function Dashboard() {
   const sys = useQuery({ queryKey: ["sys"], queryFn: api.systemInfo });
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.listRuns });
+  const prompts = useQuery({ queryKey: ["prompts"], queryFn: () => api.listPrompts() });
 
   const [reportType, setReportType] = useState("weekly");
   const [model, setModel] = useState<string>("");
+  const [promptId, setPromptId] = useState<number | null>(null);
+
+  const promptOptions = useMemo(() => {
+    return (prompts.data ?? [])
+      .filter((p) => p.report_type === reportType)
+      .sort((a, b) => b.version - a.version);
+  }, [prompts.data, reportType]);
+
+  // 切换报告类型 / prompts 加载完成时，默认选中当前生产版（找不到就第一条）
+  useEffect(() => {
+    if (promptOptions.length === 0) {
+      setPromptId(null);
+      return;
+    }
+    const stillValid = promptOptions.some((p) => p.id === promptId);
+    if (!stillValid) {
+      const active = promptOptions.find((p) => p.is_active);
+      setPromptId((active ?? promptOptions[0]).id);
+    }
+  }, [promptOptions, promptId]);
 
   const trigger = useMutation({
-    mutationFn: () => api.triggerRun({ report_type: reportType, model: model || undefined }),
+    mutationFn: () =>
+      api.triggerRun({
+        report_type: reportType,
+        model: model || undefined,
+        prompt_id: promptId ?? undefined,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["runs"] }),
   });
 
@@ -59,19 +85,39 @@ export default function Dashboard() {
               ))}
             </select>
           </Field>
+          <Field label="Prompt 版本">
+            {promptOptions.length === 0 ? (
+              <div className="select text-xs text-amber-700 bg-amber-50 border-amber-300">⚠ 该类型暂无 prompt，请先到 Prompts 页创建</div>
+            ) : (
+              <select
+                className="select"
+                value={promptId ?? ""}
+                onChange={(e) => setPromptId(Number(e.target.value))}
+              >
+                {promptOptions.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} v{p.version}{p.is_active ? " · 生产" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
           <button
             className="px-4 py-2 bg-brand-500 text-white rounded-md text-sm font-medium hover:bg-brand-600 disabled:opacity-50"
-            disabled={trigger.isPending}
+            disabled={trigger.isPending || promptOptions.length === 0}
             onClick={() => trigger.mutate()}
           >
             {trigger.isPending ? "触发中…" : "触发 Run"}
           </button>
           {trigger.isSuccess && (
-            <span className="text-xs text-emerald-600">✓ 已创建 run #{trigger.data.id}</span>
+            <span className="text-xs text-emerald-600">
+              ✓ 已创建 run #{trigger.data.id}
+              {trigger.data.prompt_name && ` · 用 ${trigger.data.prompt_name} v${trigger.data.prompt_version}`}
+            </span>
           )}
         </div>
         <p className="text-xs text-slate-500 mt-3">
-          v0.1.0 仅写入 pending 占位记录；shaper / pipeline 实现后会真正跑数据 + AI + 钉钉。
+          v0.2.0 仅写入 pending 占位记录；未指定 Prompt 版本时自动锁定当前生产版，确保历史可追溯。
         </p>
       </section>
 
@@ -87,7 +133,7 @@ export default function Dashboard() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs">
               <tr>
-                <Th>ID</Th><Th>类型</Th><Th>触发</Th><Th>模型</Th><Th>状态</Th>
+                <Th>ID</Th><Th>类型</Th><Th>触发</Th><Th>模型</Th><Th>Prompt</Th><Th>状态</Th>
                 <Th>Tokens</Th><Th>耗时</Th><Th>开始</Th>
               </tr>
             </thead>
@@ -98,6 +144,15 @@ export default function Dashboard() {
                   <Td>{r.report_type}</Td>
                   <Td>{r.trigger_type}</Td>
                   <Td className="font-mono text-xs">{r.model ?? "-"}</Td>
+                  <Td className="text-xs">
+                    {r.prompt_name ? (
+                      <Link href={`/prompts?highlight=${r.prompt_id}`} className="text-brand-600 hover:underline">
+                        {r.prompt_name} v{r.prompt_version}
+                      </Link>
+                    ) : (
+                      <span className="text-slate-400">-</span>
+                    )}
+                  </Td>
                   <Td>
                     <span className={`inline-block px-2 py-0.5 rounded border text-xs ${statusColor(r.status)}`}>
                       {r.status}
@@ -109,7 +164,7 @@ export default function Dashboard() {
                 </tr>
               ))}
               {runs.data?.length === 0 && (
-                <tr><td colSpan={8} className="text-center text-slate-400 py-8 text-xs">暂无运行记录，点上方"触发 Run"试试</td></tr>
+                <tr><td colSpan={9} className="text-center text-slate-400 py-8 text-xs">暂无运行记录，点上方"触发 Run"试试</td></tr>
               )}
             </tbody>
           </table>

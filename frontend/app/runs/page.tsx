@@ -1,5 +1,5 @@
 // 文件作用：完整 runs 列表页
-// 版本：v0.1.0
+// 版本：v0.3.0 — failed 状态 hover 显示 error_message；点击跳详情；行尾"查看报告"快捷入口
 "use client";
 
 import Link from "next/link";
@@ -14,7 +14,7 @@ export default function RunsPage() {
     <div className="space-y-4">
       <header>
         <h1 className="text-2xl font-semibold text-slate-900">运行历史</h1>
-        <p className="text-sm text-slate-500 mt-1">每次 pipeline 执行 = 一条 run。点击进详情可看 6 步全部输入输出。</p>
+        <p className="text-sm text-slate-500 mt-1">每次 pipeline 执行 = 一条 run。Prompt 列显示这次实际用的版本（点击跳到 Prompt 详情）。</p>
       </header>
 
       <section className="bg-white rounded-lg border border-slate-200">
@@ -26,6 +26,7 @@ export default function RunsPage() {
                 <th className="text-left px-4 py-2 font-medium">报告类型</th>
                 <th className="text-left px-4 py-2 font-medium">触发</th>
                 <th className="text-left px-4 py-2 font-medium">模型</th>
+                <th className="text-left px-4 py-2 font-medium">Prompt</th>
                 <th className="text-left px-4 py-2 font-medium">状态</th>
                 <th className="text-left px-4 py-2 font-medium">Tokens</th>
                 <th className="text-left px-4 py-2 font-medium">耗时</th>
@@ -40,10 +41,29 @@ export default function RunsPage() {
                   <td className="px-4 py-2">{r.report_type}</td>
                   <td className="px-4 py-2">{r.trigger_type}</td>
                   <td className="px-4 py-2 font-mono text-xs">{r.model ?? "-"}</td>
+                  <td className="px-4 py-2 text-xs">
+                    {r.prompt_name ? (
+                      <Link href={`/prompts?highlight=${r.prompt_id}`} className="text-brand-600 hover:underline">
+                        {r.prompt_name} v{r.prompt_version}
+                      </Link>
+                    ) : (
+                      <span className="text-slate-400">-</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2">
-                    <span className={`inline-block px-2 py-0.5 rounded border text-xs ${statusColor(r.status)}`}>
-                      {r.status}
-                    </span>
+                    {r.status === "failed" && r.error_message ? (
+                      <Link
+                        href={`/runs/${r.id}`}
+                        title={r.error_message}
+                        className={`inline-block px-2 py-0.5 rounded border text-xs cursor-help ${statusColor(r.status)}`}
+                      >
+                        {r.status} ⓘ
+                      </Link>
+                    ) : (
+                      <span className={`inline-block px-2 py-0.5 rounded border text-xs ${statusColor(r.status)}`}>
+                        {r.status}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2">{fmtNum(r.total_tokens)}</td>
                   <td className="px-4 py-2">{r.latency_ms != null ? `${r.latency_ms}ms` : "-"}</td>
@@ -52,7 +72,7 @@ export default function RunsPage() {
                 </tr>
               ))}
               {runs.data?.length === 0 && (
-                <tr><td colSpan={9} className="text-center text-slate-400 py-8 text-xs">暂无</td></tr>
+                <tr><td colSpan={10} className="text-center text-slate-400 py-8 text-xs">暂无</td></tr>
               )}
             </tbody>
           </table>

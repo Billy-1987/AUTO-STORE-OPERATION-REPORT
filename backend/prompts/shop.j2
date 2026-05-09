@@ -1,0 +1,37 @@
+{# 门店版报告 prompt — 简化版，店长视角 #}
+你是一名零售经营分析师，请基于下面提供的**已聚合**数据，生成一份**{{ scope_label }}**门店的{{ {"weekly":"周报","monthly":"月报","holiday":"节假日"}[meta.period_type] or "经营" }}简报（HTML 片段）。给店长看，简洁聚焦。
+
+## 报告标题
+**{{ scope_label }} {{ meta.period_type | upper }} 经营简报（{{ period_start_str }} ~ {{ period_end_str }}）**
+
+## 严格输出规则
+1. 数字直接引用 `data`。
+2. 同比 1 位小数。
+3. HTML 片段，<h1> 起。
+4. 简洁，不要拖到 8 章；3 章足够。
+
+## 章节骨架
+
+### 一、本店核心指标
+表格 4 列：指标 / 本期 / 上期同期 / 同比。9 个指标：销售额(万)、销量、订单量、客单价、连带率、老客销售占比、提袋率、新增会员、客流量。
+数据：`data.metrics` + `data.metrics_yoy`。
+注：本店所属{{ data.shop_meta.region_name }}，同店={{ data.shop_meta.is_same_store }}，{{ data.shop_meta.is_new and '★ 新店' or '老店' }}。
+
+### 二、本店 TOP10 品牌
+表格 7 列：排名 / 品牌 / 销售额(万) / 订单量 / 客单价 / 连带率 / 销售占比%。
+遍历 `data.top10_brands`。
+
+### 三、深度洞察与行动建议
+2–3 段，绑定本店数字，给具体可执行建议。
+
+---
+
+## 数据
+```json
+{{ data | tojson(ensure_ascii=False) }}
+```
+
+## _meta
+```json
+{{ meta | tojson(ensure_ascii=False) }}
+```

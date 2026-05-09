@@ -1,0 +1,40 @@
+-- 门店级核心销售指标（双期间 UNION）
+-- 字段：period_tag, shop_id, orders, qty, sales_yuan, old_user_sales_yuan, member_sales_yuan
+-- 注意：一行 b_order_list = 一件（unique_code 维度），所以 COUNT(*) 即销量
+SELECT
+  'curr'                                                                        AS period_tag,
+  ol.shop_id                                                                    AS shop_id,
+  COUNT(DISTINCT ol.parent_serial_no)                                           AS orders,
+  COUNT(*)                                                                      AS qty,
+  SUM(ol.fact_pay_amt)/100                                                      AS sales_yuan,
+  SUM(CASE WHEN u.reg_time IS NOT NULL
+            AND u.reg_time < '{{ period_start_str }} 00:00:00'
+           THEN ol.fact_pay_amt ELSE 0 END)/100                                 AS old_user_sales_yuan,
+  SUM(CASE WHEN ol.user_id > 0 THEN ol.fact_pay_amt ELSE 0 END)/100             AS member_sales_yuan
+FROM bigoffs_sync.b_order_list ol
+LEFT JOIN bigoffs_sync.user u ON u.id = ol.user_id AND ol.user_id > 0
+WHERE ol.pay_time >= '{{ period_start_str }} 00:00:00'
+  AND ol.pay_time <  '{{ period_end_next_day_str }} 00:00:00'
+  AND ol.shop_id != 3018
+  AND ol.o_status IN (7, 8)
+GROUP BY ol.shop_id
+
+UNION ALL
+
+SELECT
+  'yoy',
+  ol.shop_id,
+  COUNT(DISTINCT ol.parent_serial_no),
+  COUNT(*),
+  SUM(ol.fact_pay_amt)/100,
+  SUM(CASE WHEN u.reg_time IS NOT NULL
+            AND u.reg_time < '{{ yoy_start_str }} 00:00:00'
+           THEN ol.fact_pay_amt ELSE 0 END)/100,
+  SUM(CASE WHEN ol.user_id > 0 THEN ol.fact_pay_amt ELSE 0 END)/100
+FROM bigoffs_sync.b_order_list ol
+LEFT JOIN bigoffs_sync.user u ON u.id = ol.user_id AND ol.user_id > 0
+WHERE ol.pay_time >= '{{ yoy_start_str }} 00:00:00'
+  AND ol.pay_time <  '{{ yoy_end_next_day_str }} 00:00:00'
+  AND ol.shop_id != 3018
+  AND ol.o_status IN (7, 8)
+GROUP BY ol.shop_id;

@@ -1,0 +1,26 @@
+-- 门店级新增会员（双期间 UNION）
+-- 归属规则：reg_time 在期间内的会员，归属其首次下单的 shop_id
+-- 字段：period_tag, shop_id, new_members
+WITH first_order AS (
+  SELECT user_id, shop_id, pay_time,
+         ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY pay_time) AS rn
+  FROM bigoffs_sync.b_order_list
+  WHERE user_id > 0
+    AND shop_id != 3018
+    AND o_status IN (7, 8)
+)
+SELECT 'curr' AS period_tag, fo.shop_id, COUNT(*) AS new_members
+FROM bigoffs_sync.user u
+JOIN first_order fo ON fo.user_id = u.id AND fo.rn = 1
+WHERE u.reg_time >= '{{ period_start_str }} 00:00:00'
+  AND u.reg_time <  '{{ period_end_next_day_str }} 00:00:00'
+GROUP BY fo.shop_id
+
+UNION ALL
+
+SELECT 'yoy', fo.shop_id, COUNT(*)
+FROM bigoffs_sync.user u
+JOIN first_order fo ON fo.user_id = u.id AND fo.rn = 1
+WHERE u.reg_time >= '{{ yoy_start_str }} 00:00:00'
+  AND u.reg_time <  '{{ yoy_end_next_day_str }} 00:00:00'
+GROUP BY fo.shop_id;

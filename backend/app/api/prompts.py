@@ -1,5 +1,5 @@
 # 文件作用：prompts 版本管理 API
-# 版本：v0.1.0
+# 版本：v0.3.0 — DELETE 任意版本；默认（is_active）唯一性按 report_type 维度
 
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
@@ -64,7 +64,7 @@ def create_prompt(req: PromptCreate, db: Session = Depends(get_db)):
 
     if req.set_active:
         db.query(Prompt).filter(
-            and_(Prompt.name == req.name, Prompt.is_active == 1)
+            and_(Prompt.report_type == req.report_type, Prompt.is_active == 1)
         ).update({"is_active": 0})
 
     p = Prompt(
@@ -89,9 +89,19 @@ def activate_prompt(prompt_id: int, db: Session = Depends(get_db)):
     if not p:
         raise HTTPException(404, "prompt not found")
     db.query(Prompt).filter(
-        and_(Prompt.name == p.name, Prompt.is_active == 1)
+        and_(Prompt.report_type == p.report_type, Prompt.is_active == 1)
     ).update({"is_active": 0})
     p.is_active = 1
     db.commit()
     p = db.get(Prompt, prompt_id)
     return PromptOut.model_validate(p, from_attributes=True)
+
+
+@router.delete("/{prompt_id}")
+def delete_prompt(prompt_id: int, db: Session = Depends(get_db)):
+    p = db.get(Prompt, prompt_id)
+    if not p:
+        raise HTTPException(404, "prompt not found")
+    db.delete(p)
+    db.commit()
+    return {"deleted": prompt_id}

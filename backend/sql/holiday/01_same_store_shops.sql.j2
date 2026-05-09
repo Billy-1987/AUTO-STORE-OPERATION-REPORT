@@ -1,0 +1,11 @@
+-- 同店门店列表：上年同期跨越的每个自然月都有销售
+-- 输入：yoy_start_str / yoy_end_next_day_str / yoy_months_count
+-- 输出：shop_id 一列
+SELECT shop_id
+FROM bigoffs_sync.b_order_list
+WHERE pay_time >= '{{ yoy_start_str }} 00:00:00'
+  AND pay_time <  '{{ yoy_end_next_day_str }} 00:00:00'
+  AND shop_id != 3018
+  AND o_status IN (7, 8)
+GROUP BY shop_id
+HAVING COUNT(DISTINCT (YEAR(pay_time) * 100 + MONTH(pay_time))) = {{ yoy_months_count }};

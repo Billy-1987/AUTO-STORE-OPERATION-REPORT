@@ -1,5 +1,5 @@
 // 文件作用：Run 详情页 — 6 步流水线可视化
-// 版本：v0.1.0
+// 版本：v0.2.0 — 头部展示本次实际使用的 prompt 版本（点击跳转）
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
@@ -38,6 +38,12 @@ export default function RunDetail({ params }: { params: { id: string } }) {
           </div>
           <p className="text-sm text-slate-500 mt-1">
             {r.report_type} · {r.trigger_type} · 模型 <span className="font-mono">{r.model ?? "-"}</span>
+            {" · "}
+            Prompt {r.prompt_name ? (
+              <Link href={`/prompts?highlight=${r.prompt_id}`} className="text-brand-600 hover:underline font-medium">
+                {r.prompt_name} v{r.prompt_version} ↗
+              </Link>
+            ) : <span className="text-slate-400">未指定</span>}
           </p>
         </div>
         <div className="text-right text-xs text-slate-500 space-y-0.5">

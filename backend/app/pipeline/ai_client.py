@@ -1,6 +1,6 @@
 # 文件作用：ModelVerse 多模型 AI 客户端 (OpenAI 协议兼容)
-# 支持 5 个模型 A/B 切换，统一接口返回 (text, usage, latency_ms)
-# 版本：v0.1.0 — 初始化
+# 支持 7 个模型 A/B 切换（含 Gemini 系列），统一接口返回 (text, usage, latency_ms)
+# 版本：v0.1.1 — 加入 gemini-3.1-pro-preview / gemini-2.5-flash
 
 from __future__ import annotations
 

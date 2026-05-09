@@ -1,5 +1,5 @@
 // 文件作用：前端 API client + 类型定义
-// 版本：v0.1.0
+// 版本：v0.3.0 — deletePrompt
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -26,10 +26,12 @@ export type RunSummary = {
   started_at: string;
   finished_at: string | null;
   error_message: string | null;
+  prompt_id: number | null;
+  prompt_name: string | null;
+  prompt_version: number | null;
 };
 
 export type RunDetail = RunSummary & {
-  prompt_id: number | null;
   sql_dump: string | null;
   data_dump: string | null;
   prompt_rendered: string | null;
@@ -83,6 +85,7 @@ export const api = {
   createPrompt: (body: { name: string; report_type: string; content: string; description?: string; model?: string; set_active?: boolean }) =>
     http<Prompt>("/api/prompts", { method: "POST", body: JSON.stringify(body) }),
   activatePrompt: (id: number) => http<Prompt>(`/api/prompts/${id}/activate`, { method: "POST" }),
+  deletePrompt: (id: number) => http<{ deleted: number }>(`/api/prompts/${id}`, { method: "DELETE" }),
 
   listRecipients: () => http<Recipient[]>("/api/recipients"),
   createRecipient: (body: Partial<Recipient> & { name: string; role: string }) =>

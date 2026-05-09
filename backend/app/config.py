@@ -1,5 +1,5 @@
 # 文件作用：集中读取 .env 配置，pydantic-settings 校验
-# 版本：v0.1.0 — 初始化
+# 版本：v0.2.0 — 钉钉切到企业内部应用（工作通知），删 webhook 字段
 
 from functools import lru_cache
 from pathlib import Path
@@ -15,6 +15,8 @@ SUPPORTED_MODELS: list[str] = [
     "claude-haiku-4-5-20251001",  # 快/便宜
     "deepseek-v4-pro",            # 国产母语
     "gpt-5.5",                    # 西方旗舰
+    "gemini-3.1-pro-preview",     # Google 旗舰
+    "gemini-2.5-flash",           # Google 高性价比
 ]
 
 
@@ -44,9 +46,11 @@ class Settings(BaseSettings):
     doris_rw_password: str = ""
     doris_rw_db: str = ""
 
-    # DingTalk
-    dingtalk_webhook: str = ""
-    dingtalk_secret: str = ""
+    # DingTalk 企业内部应用（工作通知，私发到"工作通知"小助手）
+    # 钉钉开放平台 → 应用开发 → 企业内部应用 → 凭证与基础信息
+    dingtalk_app_key: str = ""
+    dingtalk_app_secret: str = ""
+    dingtalk_agent_id: str = ""  # 应用 AgentId，asyncsend_v2 必填
 
     # App
     app_host: str = "0.0.0.0"

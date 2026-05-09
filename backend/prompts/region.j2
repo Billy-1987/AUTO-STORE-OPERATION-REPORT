@@ -1,0 +1,57 @@
+{# 区域版报告 prompt — sub_breakdown 是该区门店列表 #}
+你是一名零售经营分析师，请基于下面提供的**已聚合**数据，生成一份**{{ scope_label }}**维度的{{ {"weekly":"周报","monthly":"月报","holiday":"节假日"}[meta.period_type] or "经营" }}经营简报（HTML 片段）。
+
+## 报告标题
+**{{ scope_label }} {{ meta.period_type | upper }} 经营简报（{{ period_start_str }} ~ {{ period_end_str }}）**
+
+## 严格输出规则
+1. 数字直接引用 `data`。
+2. 同比 1 位小数；提袋率/老客销比不展示同比。
+3. HTML 片段，<h1> 起。
+4. 文案以"{{ scope_label }}"为主语。
+
+## 章节骨架
+
+### 一、总体概况
+本{{ scope_label }}共 {{ data.store_count }} 家门店参与经营，可比同店 {{ data.same_store_count }} 家，新增门店 {{ data.new_store_count }} 家。
+
+核心指标总览表（5 列：指标/整体/整体同比/同店/同店同比，9 个指标）。
+
+### 二、各门店经营数据
+表格 11 列：门店 / 销售额(万) / 整体同比 / 销量 / 订单量 / 客单价 / 连带率 / 老客销比 / 新增会员 / 客流量 / 状态(同店/新店)。
+遍历 `data.sub_breakdown`（{{ data.sub_breakdown | length }} 家门店，按销售降序）。
+
+### 三、销售额 TOP5 门店
+遍历 `data.top5_stores`。
+
+### 四、新增门店表现
+遍历 `data.new_stores`。
+
+{% if meta.period_type != 'holiday' %}
+### 五、销售额 TOP20 品牌表现
+本区域 TOP20 品牌，遍历 `data.top20_brands`。
+
+### 六、增长来源拆解
+`data.growth_decomposition`。
+
+### 七、深度洞察与行动建议
+4 段：同店质量、区域内分化、新店爬坡、商品结构。绑定本区数字。
+
+### 八、经营预警
+红/橙/黄 5–8 条。
+{% else %}
+### 五、深度洞察与行动建议
+4 段：增长结构、同店质量、门店分化、新店首秀。
+{% endif %}
+
+---
+
+## 数据
+```json
+{{ data | tojson(ensure_ascii=False) }}
+```
+
+## _meta
+```json
+{{ meta | tojson(ensure_ascii=False) }}
+```

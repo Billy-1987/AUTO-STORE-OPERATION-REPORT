@@ -1,0 +1,18 @@
+-- 门店级客流（双期间 UNION）
+-- 红线 3：必须先按门店聚合，shaper 上推到区域时是第二层 sum
+-- 字段：period_tag, shop_id, traffic
+SELECT 'curr' AS period_tag, shop_id, SUM(flow_in) AS traffic
+FROM bigoffs_sync.b_store_flow
+WHERE statistics_time >= '{{ period_start_str }} 00:00:00'
+  AND statistics_time <  '{{ period_end_next_day_str }} 00:00:00'
+  AND shop_id != 3018
+GROUP BY shop_id
+
+UNION ALL
+
+SELECT 'yoy', shop_id, SUM(flow_in)
+FROM bigoffs_sync.b_store_flow
+WHERE statistics_time >= '{{ yoy_start_str }} 00:00:00'
+  AND statistics_time <  '{{ yoy_end_next_day_str }} 00:00:00'
+  AND shop_id != 3018
+GROUP BY shop_id;
