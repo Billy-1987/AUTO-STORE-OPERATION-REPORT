@@ -1,7 +1,9 @@
 # 文件作用：runs 列表/详情/手动触发 API
+# 版本：v0.5.0 — 新增 GET /{id}/dispatch：暴露第 6 步钉钉分发结果 + 命中的收件人
 # 版本：v0.4.0 — 适配两阶段 runner：/manual 自动建 dataset+report_run；新增 scope 字段
 # 版本：v0.3.0 — /manual 创建 pending 后立刻通过 BackgroundTasks 派发到 runner；新增 /retry 重跑
 
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -10,8 +12,8 @@ from sqlalchemy import and_, desc
 from sqlalchemy.orm import Session
 
 from app.models.db import get_db
-from app.models.entities import Dataset, Prompt, Run
-from app.pipeline.runner import execute_dataset_run, execute_report_run
+from app.models.entities import Dataset, Prompt, Recipient, Report, Run
+from app.pipeline.runner import _recipient_scope, execute_dataset_run, execute_report_run
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -172,6 +174,82 @@ def trigger_manual(
 
     bg.add_task(_run_full_pipeline, ds.id, run.id, need_dataset_run)
     return RunSummary.model_validate(_attach_prompt(db, run))
+
+
+class DispatchRecipient(BaseModel):
+    id: int
+    name: str
+    role: str
+    dingtalk_userid: str | None
+    dingtalk_mobile: str | None
+    included: bool          # 派发时是否进了 userid_list（有 userid 才算）
+
+
+class DispatchInfo(BaseModel):
+    status: str             # pending / sent / failed / skipped / not_reached
+    sent_at: datetime | None
+    title: str | None
+    summary: str | None
+    public_url: str | None
+    response: dict | None   # 钉钉 API 解析后的 JSON
+    recipients: list[DispatchRecipient]
+
+
+@router.get("/{run_id}/dispatch", response_model=DispatchInfo)
+def get_run_dispatch(run_id: int, db: Session = Depends(get_db)):
+    """第 6 步钉钉分发的展示接口：报告行 + 命中本 scope 的订阅者。"""
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+
+    # Report 行（pipeline 走到第 7 步才会写）
+    rep = (
+        db.query(Report)
+        .filter(Report.run_id == run_id)
+        .order_by(desc(Report.id))
+        .first()
+    )
+
+    # 命中本 scope 的订阅者快照（按当前 recipients 表算，非分发时刻）
+    sub_col = {
+        "weekly": Recipient.subscribe_weekly,
+        "monthly": Recipient.subscribe_monthly,
+        "holiday": Recipient.subscribe_holiday,
+    }.get(run.report_type)
+    q = db.query(Recipient).filter(Recipient.is_active == 1)
+    if sub_col is not None:
+        q = q.filter(sub_col == 1)
+
+    matched: list[DispatchRecipient] = []
+    for r in q.all():
+        sc = _recipient_scope(r)
+        if not sc:
+            continue
+        if sc[0] != run.scope_type or sc[1] != run.scope_id:
+            continue
+        matched.append(DispatchRecipient(
+            id=r.id, name=r.name, role=r.role,
+            dingtalk_userid=r.dingtalk_userid,
+            dingtalk_mobile=r.dingtalk_mobile,
+            included=bool(r.dingtalk_userid),
+        ))
+
+    parsed_response: dict | None = None
+    if rep and rep.dingtalk_response:
+        try:
+            parsed_response = json.loads(rep.dingtalk_response)
+        except Exception:
+            parsed_response = {"raw": rep.dingtalk_response}
+
+    return DispatchInfo(
+        status=(rep.dingtalk_status if rep else "not_reached"),
+        sent_at=(rep.sent_at if rep else None),
+        title=(rep.title if rep else None),
+        summary=(rep.summary if rep else None),
+        public_url=(rep.public_url if rep else None),
+        response=parsed_response,
+        recipients=matched,
+    )
 
 
 @router.post("/{run_id}/retry", response_model=RunSummary)

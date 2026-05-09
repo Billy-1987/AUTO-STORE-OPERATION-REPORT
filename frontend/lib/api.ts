@@ -1,4 +1,5 @@
 // 文件作用：前端 API client + 类型定义
+// 版本：v0.5.2 — 加 getRunDispatch（run 详情页 ⑥ 步钉钉分发展示）
 // 版本：v0.5.1 — 加 listHolidays（系统信息页展示节假日日期）
 // 版本：v0.5.0 — Prompt 改原地编辑：去掉 create/activate/delete，加 updatePrompt；加 listShops
 // 版本：v0.4.0 — RunSummary/RunDetail 加 scope 字段；triggerRun body 加 scope_type/scope_id
@@ -77,6 +78,25 @@ export type Shop = {
   region_name: string | null;
 };
 
+export type DispatchRecipient = {
+  id: number;
+  name: string;
+  role: string;
+  dingtalk_userid: string | null;
+  dingtalk_mobile: string | null;
+  included: boolean;
+};
+
+export type DispatchInfo = {
+  status: "pending" | "sent" | "failed" | "skipped" | "not_reached";
+  sent_at: string | null;
+  title: string | null;
+  summary: string | null;
+  public_url: string | null;
+  response: Record<string, unknown> | null;
+  recipients: DispatchRecipient[];
+};
+
 export type Recipient = {
   id: number;
   name: string;
@@ -101,6 +121,7 @@ export const api = {
 
   listRuns: () => http<RunSummary[]>("/api/runs"),
   getRun: (id: number) => http<RunDetail>(`/api/runs/${id}`),
+  getRunDispatch: (id: number) => http<DispatchInfo>(`/api/runs/${id}/dispatch`),
   triggerRun: (body: { report_type: string; scope_type?: string; scope_id?: string | null; scope_label?: string; model?: string; prompt_id?: number; period_start?: string; period_end?: string; dataset_id?: number }) =>
     http<RunSummary>("/api/runs/manual", { method: "POST", body: JSON.stringify(body) }),
 
