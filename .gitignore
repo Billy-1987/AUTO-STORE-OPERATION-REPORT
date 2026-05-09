@@ -1,3 +1,40 @@
+# Sensitive
 .bigoffs-db
+.env
+.env.local
+*.local
+
+# Editor / OS
 .~*
+.DS_Store
 .claude/
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.uv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Generated reports / runtime
+backend/reports/
+backend/logs/
+*.log
+
+# Build
+dist/
+build/

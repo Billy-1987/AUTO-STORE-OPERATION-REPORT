@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 250 250 252;
+  --foreground: 15 23 42;
+}
+
+html, body { height: 100%; }
+body {
+  background-color: rgb(var(--background));
+  color: rgb(var(--foreground));
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/* 简易代码块 */
+.codeblock {
+  @apply font-mono text-xs bg-slate-900 text-slate-100 rounded-md p-3 overflow-auto whitespace-pre-wrap break-all;
+}
+
+.select {
+  @apply px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30;
+}
+
+.input {
+  @apply px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30;
+}
+
+.btn {
+  @apply px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:bg-slate-50 transition;
+}
+
+.btn-primary {
+  @apply px-3 py-1.5 text-sm rounded-md bg-brand-500 text-white hover:bg-brand-600 transition;
+}
