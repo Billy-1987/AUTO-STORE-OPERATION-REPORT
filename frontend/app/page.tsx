@@ -1,4 +1,5 @@
 // 文件作用：Dashboard 首页 — 概览 + 触发表单（报告类型 × 范围 × 范围标的）+ 最近 runs
+// 版本：v0.6.0 — 删掉「高级 / 覆盖 Prompt」UI，prompt 完全由 report_type × scope_type 自动锁定
 // 版本：v0.5.0 — 触发表单选择持久化到 localStorage，跨页面切换不丢
 // 版本：v0.4.0 — 触发表单去掉 prompt 选择器（自动锁定生产版），新增 scope_type/scope_id 联动选择
 "use client";
@@ -8,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api, type Prompt, type Shop } from "@/lib/api";
 import { fmtDate, fmtNum, statusColor } from "@/lib/utils";
-import { Play, Activity, ChevronDown, ChevronRight } from "lucide-react";
+import { Play, Activity } from "lucide-react";
 
 const SCOPE_LABEL: Record<string, string> = {
   national: "全国",
@@ -32,8 +33,6 @@ export default function Dashboard() {
   const [scopeType, setScopeType] = useState<"national" | "super_region" | "region" | "shop">("national");
   const [scopeId, setScopeId] = useState<string>("");
   const [model, setModel] = useState<string>("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [overridePromptId, setOverridePromptId] = useState<number | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   // localStorage 加载（只在 mount 时跑一次）
@@ -46,10 +45,6 @@ export default function Dashboard() {
         if (typeof s.scopeType === "string") setScopeType(s.scopeType);
         if (typeof s.scopeId === "string") setScopeId(s.scopeId);
         if (typeof s.model === "string") setModel(s.model);
-        if (typeof s.showAdvanced === "boolean") setShowAdvanced(s.showAdvanced);
-        if (s.overridePromptId === null || typeof s.overridePromptId === "number") {
-          setOverridePromptId(s.overridePromptId);
-        }
       }
     } catch {}
     setHydrated(true);
@@ -61,10 +56,10 @@ export default function Dashboard() {
     try {
       localStorage.setItem(
         TRIGGER_FORM_STORAGE_KEY,
-        JSON.stringify({ reportType, scopeType, scopeId, model, showAdvanced, overridePromptId })
+        JSON.stringify({ reportType, scopeType, scopeId, model })
       );
     } catch {}
-  }, [hydrated, reportType, scopeType, scopeId, model, showAdvanced, overridePromptId]);
+  }, [hydrated, reportType, scopeType, scopeId, model]);
 
   // 自动锁定的 prompt（按 report_type + scope_type 找 active）
   const lockedPrompt = useMemo<Prompt | null>(() => {
@@ -79,7 +74,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (!hydrated) return;
     setScopeId("");
-    setOverridePromptId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeType, reportType]);
 
@@ -107,16 +101,9 @@ export default function Dashboard() {
         scope_type: scopeType,
         scope_id: scopeType === "national" ? null : (scopeId || null),
         model: model || undefined,
-        prompt_id: overridePromptId ?? undefined,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["runs"] }),
   });
-
-  const promptOptionsForOverride = useMemo(() => {
-    return (prompts.data ?? [])
-      .filter((p) => p.report_type === reportType && (p.scope_type ?? "national") === scopeType)
-      .sort((a, b) => b.version - a.version);
-  }, [prompts.data, reportType, scopeType]);
 
   const canTrigger =
     !!lockedPrompt &&
@@ -215,32 +202,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* 高级折叠 */}
-        <button
-          className="mt-3 text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1"
-          onClick={() => setShowAdvanced((v) => !v)}
-        >
-          {showAdvanced ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-          高级
-        </button>
-        {showAdvanced && (
-          <div className="mt-2 pl-4 border-l-2 border-slate-200">
-            <Field label="覆盖 Prompt（仅排查/对比时用）">
-              <select
-                className="select"
-                value={overridePromptId ?? ""}
-                onChange={(e) => setOverridePromptId(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">使用自动锁定版</option>
-                {promptOptionsForOverride.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    #{p.id} {p.name}{p.is_active ? " · 默认" : ""}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        )}
       </section>
 
       {/* 最近 runs */}
