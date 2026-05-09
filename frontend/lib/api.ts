@@ -1,5 +1,6 @@
 // 文件作用：前端 API client + 类型定义
-// 版本：v0.3.0 — deletePrompt
+// 版本：v0.5.0 — Prompt 改原地编辑：去掉 create/activate/delete，加 updatePrompt；加 listShops
+// 版本：v0.4.0 — RunSummary/RunDetail 加 scope 字段；triggerRun body 加 scope_type/scope_id
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -17,6 +18,10 @@ export type RunSummary = {
   id: number;
   trigger_type: string;
   report_type: string;
+  dataset_id: number | null;
+  scope_type: string | null;
+  scope_id: string | null;
+  scope_label: string | null;
   model: string | null;
   status: string;
   period_start: string | null;
@@ -46,6 +51,7 @@ export type Prompt = {
   id: number;
   name: string;
   report_type: string;
+  scope_type: string | null;
   version: number;
   content: string | null;
   description: string | null;
@@ -53,6 +59,13 @@ export type Prompt = {
   is_active: number;
   created_at: string;
   updated_at: string;
+};
+
+export type Shop = {
+  shop_id: number;
+  shop_name: string;
+  region_id: number | null;
+  region_name: string | null;
 };
 
 export type Recipient = {
@@ -74,18 +87,17 @@ export const api = {
   systemInfo: () => http<Record<string, unknown>>("/api/system/info"),
   models: () => http<{ default: string; supported: string[] }>("/api/models"),
   regions: () => http<{ regions: Record<string, string>; super_regions: Record<string, number[]> }>("/api/regions"),
+  listShops: () => http<{ shops: Shop[] }>("/api/shops"),
 
   listRuns: () => http<RunSummary[]>("/api/runs"),
   getRun: (id: number) => http<RunDetail>(`/api/runs/${id}`),
-  triggerRun: (body: { report_type: string; model?: string; prompt_id?: number; period_start?: string; period_end?: string }) =>
+  triggerRun: (body: { report_type: string; scope_type?: string; scope_id?: string | null; scope_label?: string; model?: string; prompt_id?: number; period_start?: string; period_end?: string; dataset_id?: number }) =>
     http<RunSummary>("/api/runs/manual", { method: "POST", body: JSON.stringify(body) }),
 
   listPrompts: (report_type?: string) =>
     http<Prompt[]>(`/api/prompts${report_type ? `?report_type=${report_type}` : ""}`),
-  createPrompt: (body: { name: string; report_type: string; content: string; description?: string; model?: string; set_active?: boolean }) =>
-    http<Prompt>("/api/prompts", { method: "POST", body: JSON.stringify(body) }),
-  activatePrompt: (id: number) => http<Prompt>(`/api/prompts/${id}/activate`, { method: "POST" }),
-  deletePrompt: (id: number) => http<{ deleted: number }>(`/api/prompts/${id}`, { method: "DELETE" }),
+  updatePrompt: (id: number, body: { content?: string; description?: string; model?: string }) =>
+    http<Prompt>(`/api/prompts/${id}`, { method: "PUT", body: JSON.stringify(body) }),
 
   listRecipients: () => http<Recipient[]>("/api/recipients"),
   createRecipient: (body: Partial<Recipient> & { name: string; role: string }) =>

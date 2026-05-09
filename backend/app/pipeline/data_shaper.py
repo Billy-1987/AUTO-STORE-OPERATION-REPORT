@@ -1,24 +1,22 @@
-# 文件作用：把 6 个 SQL 结果聚合成 dataset，直接按 scope 切好。
-# 版本：v0.3.0 — 重构：输出 scopes dict，每个 scope 都是一份完整可喂 prompt 的视图
+# 文件作用：把 6 个 SQL 结果聚合成 dataset，按 scope 切好；输出**中文字段名**给 AI 用
+# 版本：v0.4.0 — 字段全中文，prompt 和数据完全用同一套术语，LLM 零猜测
+# 版本：v0.3.0 — 重构按 scope 切片
 # 版本：v0.2.0 — 完整 4 层 + 双口径 + 同比 + TOP5/TOP20 + 增长拆解
-# 版本：v0.1.0 — 骨架占位
 #
 # 输出结构：
 #   {
-#     "_meta": {period_type, period_start, period_end, store_count_total, same_store_count_total},
+#     "_meta": {...},   # 内部用，AI 不会看
 #     "scopes": {
-#        "national":             { 完整视图 },
-#        "super_region:华北大区":  { 完整视图 },
-#        "super_region:西南大区":  { 完整视图 },
-#        "region:68":            { 完整视图 },        # 8 个区
-#        ...
-#        "shop:3079":            { 简化视图（店长版） },  # 每家本期有销售的门店
+#        "national":              { 中文键的完整视图 },
+#        "super_region:华北大区":  { ... },
+#        "region:68":             { ... },
+#        "shop:3079":             { ... }
 #     }
 #   }
 #
 # 红线：
-# 1. AI 只接聚合数据（这里输出 ≤几 KB 的切片）
-# 3. 客流先门店再区域两层（SQL 已先按 shop_id sum，scope view 第二层 sum）
+# 1. AI 只接聚合数据
+# 3. 客流先门店再区域两层
 # 4. 同店 = 上年同期跨越的每个自然月都有销售（SQL 1）
 
 from __future__ import annotations
@@ -39,11 +37,31 @@ SUPER_REGIONS: dict[str, list[int]] = {
 REGION_OVERRIDE: dict[int, int] = {3079: 163, 3066: 67}
 EXCLUDE_SHOPS: set[int] = {3018}
 
-RAW_NUMERATOR_FIELDS = (
+# 内部聚合用英文字段（计算用），输出时再翻译成中文
+_RAW_FIELDS = (
     "sales_yuan", "qty", "orders",
     "old_user_sales_yuan", "member_sales_yuan",
     "new_members", "traffic",
 )
+
+# 中文输出字段映射
+_M_RAW = {
+    "sales_yuan": "销售额",
+    "qty": "销量",
+    "orders": "订单量",
+    "old_user_sales_yuan": "老客销售额",
+    "member_sales_yuan": "会员销售额",
+    "new_members": "新增会员",
+    "traffic": "客流量",
+}
+_M_DERIVED = {
+    "atv": "客单价",
+    "upt": "连带率",
+    "old_user_ratio": "老客销售占比",
+    "conversion": "提袋率",
+}
+# 同比展示的字段（提袋率/老客销比不算同比）
+_YOY_FIELDS = ("sales_yuan", "qty", "orders", "atv", "upt", "new_members", "traffic")
 
 
 # ───────────────────────── helpers ─────────────────────────
@@ -84,35 +102,47 @@ def _super_of(region_id: int | None) -> str | None:
 
 
 def _zero_raw() -> dict[str, float]:
-    return {k: 0.0 for k in RAW_NUMERATOR_FIELDS}
+    return {k: 0.0 for k in _RAW_FIELDS}
 
 
 def _add(a: dict[str, float], b: dict[str, float]) -> None:
-    for k in RAW_NUMERATOR_FIELDS:
+    for k in _RAW_FIELDS:
         a[k] = a.get(k, 0.0) + b.get(k, 0.0)
 
 
-def _derive(raw: dict[str, float]) -> dict[str, float | None]:
-    """每层重算除法指标，不跨层平均。"""
+def _derive_zh(raw: dict[str, float]) -> dict[str, Any]:
+    """从英文 raw 算出中文键的指标块（含原料 + 派生）。"""
     sales = raw.get("sales_yuan", 0.0)
     orders = raw.get("orders", 0.0)
     qty = raw.get("qty", 0.0)
     traffic = raw.get("traffic", 0.0)
     old = raw.get("old_user_sales_yuan", 0.0)
-    return {
-        **raw,
-        "atv": _safe_div(sales, orders),
-        "upt": _safe_div(qty, orders),
-        "old_user_ratio": _safe_div(old, sales),
-        "conversion": _safe_div(orders, traffic),
-    }
-
-
-def _yoy_block(curr: dict, prev: dict) -> dict[str, float | None]:
-    out: dict[str, float | None] = {}
-    for k in ("sales_yuan", "qty", "orders", "atv", "upt", "new_members", "traffic"):
-        out[k] = _yoy(curr.get(k), prev.get(k))
+    out: dict[str, Any] = {}
+    for ek, zh in _M_RAW.items():
+        out[zh] = raw.get(ek, 0.0)
+    out["客单价"] = _safe_div(sales, orders)
+    out["连带率"] = _safe_div(qty, orders)
+    out["老客销售占比"] = _safe_div(old, sales)
+    out["提袋率"] = _safe_div(orders, traffic)
     return out
+
+
+def _yoy_block_zh(curr_raw: dict[str, float], prev_raw: dict[str, float]) -> dict[str, Any]:
+    """同比块（中文键）。提袋率/老客销比不算同比。"""
+    # 派生指标的同比要先派生再算
+    curr_atv = _safe_div(curr_raw.get("sales_yuan", 0), curr_raw.get("orders", 0))
+    prev_atv = _safe_div(prev_raw.get("sales_yuan", 0), prev_raw.get("orders", 0))
+    curr_upt = _safe_div(curr_raw.get("qty", 0), curr_raw.get("orders", 0))
+    prev_upt = _safe_div(prev_raw.get("qty", 0), prev_raw.get("orders", 0))
+    return {
+        "销售额": _yoy(curr_raw.get("sales_yuan"), prev_raw.get("sales_yuan")),
+        "销量": _yoy(curr_raw.get("qty"), prev_raw.get("qty")),
+        "订单量": _yoy(curr_raw.get("orders"), prev_raw.get("orders")),
+        "客单价": _yoy(curr_atv, prev_atv),
+        "连带率": _yoy(curr_upt, prev_upt),
+        "新增会员": _yoy(curr_raw.get("new_members"), prev_raw.get("new_members")),
+        "客流量": _yoy(curr_raw.get("traffic"), prev_raw.get("traffic")),
+    }
 
 
 # ───────────────────────── parse ─────────────────────────
@@ -126,12 +156,12 @@ def _parse(rows_by_query: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         rid = _resolve_region(sid, r.get("region_id"))
         rid = _i(rid) if rid is not None else None
         shop_meta[sid] = {
-            "shop_id": sid,
-            "shop_name": r.get("shop_name") or "",
-            "region_id": rid,
-            "region_name": REGIONS.get(rid),
-            "super_region": _super_of(rid),
-            "opening_date": r.get("opening_time"),
+            "门店ID": sid,
+            "门店名": r.get("shop_name") or "",
+            "区域ID": rid,
+            "区域名": REGIONS.get(rid),
+            "大区": _super_of(rid),
+            "开业日期": str(r["opening_time"]) if r.get("opening_time") else None,
         }
 
     same_store_set: set[int] = {
@@ -189,7 +219,7 @@ def _parse(rows_by_query: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
 
 # ───────────────────────── 单 scope 视图 ─────────────────────────
 
-def _agg(metrics: dict[tuple[str, int], dict[str, float]], shop_ids: set[int]) -> tuple[dict, dict]:
+def _agg_raw(metrics: dict[tuple[str, int], dict[str, float]], shop_ids: set[int]) -> tuple[dict, dict]:
     raw_curr = _zero_raw()
     raw_prev = _zero_raw()
     for (tag, sid), m in metrics.items():
@@ -199,10 +229,10 @@ def _agg(metrics: dict[tuple[str, int], dict[str, float]], shop_ids: set[int]) -
             _add(raw_curr, m)
         elif tag == "yoy":
             _add(raw_prev, m)
-    return _derive(raw_curr), _derive(raw_prev)
+    return raw_curr, raw_prev
 
 
-def _store_view(parsed: dict, sid: int) -> dict[str, Any] | None:
+def _store_view_zh(parsed: dict, sid: int) -> dict[str, Any] | None:
     metrics = parsed["shop_metrics"]
     meta = parsed["shop_meta"].get(sid)
     if not meta:
@@ -211,30 +241,28 @@ def _store_view(parsed: dict, sid: int) -> dict[str, Any] | None:
     prev_raw = metrics.get(("yoy", sid), _zero_raw())
     if not curr_raw.get("sales_yuan") and not curr_raw.get("orders"):
         return None
-    curr = _derive(curr_raw)
-    prev = _derive(prev_raw)
     return {
         **meta,
-        "is_same_store": sid in parsed["same_store_set"],
-        "is_new": sid not in parsed["same_store_set"],
-        "metrics": curr,
-        "metrics_yoy": _yoy_block(curr, prev),
+        "是否同店": sid in parsed["same_store_set"],
+        "是否新店": sid not in parsed["same_store_set"],
+        "指标": _derive_zh(curr_raw),
+        "指标同比": _yoy_block_zh(curr_raw, prev_raw),
     }
 
 
-def _top_n_stores(parsed: dict, shop_ids: set[int], n: int) -> list[dict]:
-    views = [v for v in (_store_view(parsed, s) for s in shop_ids) if v]
-    views.sort(key=lambda x: -(x["metrics"].get("sales_yuan") or 0))
-    return [{"rank": i + 1, **v} for i, v in enumerate(views[:n])]
+def _top_n_stores_zh(parsed: dict, shop_ids: set[int], n: int) -> list[dict]:
+    views = [v for v in (_store_view_zh(parsed, s) for s in shop_ids) if v]
+    views.sort(key=lambda x: -(x["指标"].get("销售额") or 0))
+    return [{"排名": i + 1, **v} for i, v in enumerate(views[:n])]
 
 
-def _new_stores_in(parsed: dict, shop_ids: set[int]) -> list[dict]:
-    views = [v for v in (_store_view(parsed, s) for s in shop_ids) if v and v["is_new"]]
-    views.sort(key=lambda x: -(x["metrics"].get("sales_yuan") or 0))
+def _new_stores_zh(parsed: dict, shop_ids: set[int]) -> list[dict]:
+    views = [v for v in (_store_view_zh(parsed, s) for s in shop_ids) if v and v["是否新店"]]
+    views.sort(key=lambda x: -(x["指标"].get("销售额") or 0))
     return views
 
 
-def _top20_brands_in(parsed: dict, shop_ids: set[int]) -> list[dict]:
+def _top20_brands_zh(parsed: dict, shop_ids: set[int]) -> list[dict]:
     same_store = parsed["same_store_set"] & shop_ids
     rows = parsed["brand_metrics"]
 
@@ -271,28 +299,28 @@ def _top20_brands_in(parsed: dict, shop_ids: set[int]) -> list[dict]:
         prev = same_prev.get(bid, 0.0)
         cur = same_curr.get(bid, 0.0)
         if prev >= 1_000_000:
-            yoy_label = _yoy(cur, prev)
+            yoy_label: Any = _yoy(cur, prev)
         elif prev > 0:
             yoy_label = "小基数"
         else:
             yoy_label = "新进"
         out.append({
-            "rank": i + 1,
-            "brand_id": bid,
-            "brand_name": b["brand_name"],
-            "sales_yuan": b["sales_yuan"],
-            "share_pct": b["sales_yuan"] / total_sales,
-            "qty": b["qty"],
-            "orders": b["orders"],
-            "atv": _safe_div(b["sales_yuan"], b["orders"]),
-            "upt": _safe_div(b["qty"], b["orders"]),
-            "shop_coverage": len(b["shop_set"]),
-            "same_store_yoy": yoy_label,
+            "排名": i + 1,
+            "品牌ID": bid,
+            "品牌名": b["brand_name"],
+            "销售额": b["sales_yuan"],
+            "占比": b["sales_yuan"] / total_sales,
+            "销量": b["qty"],
+            "订单量": b["orders"],
+            "客单价": _safe_div(b["sales_yuan"], b["orders"]),
+            "连带率": _safe_div(b["qty"], b["orders"]),
+            "覆盖门店": len(b["shop_set"]),
+            "同店同比": yoy_label,
         })
     return out
 
 
-def _growth_in(parsed: dict, shop_ids: set[int]) -> dict[str, Any]:
+def _growth_zh(parsed: dict, shop_ids: set[int]) -> dict[str, Any]:
     metrics = parsed["shop_metrics"]
     same_store = parsed["same_store_set"] & shop_ids
 
@@ -308,85 +336,90 @@ def _growth_in(parsed: dict, shop_ids: set[int]) -> dict[str, Any]:
     same_inc = same_curr_sum - same_prev_sum
 
     return {
-        "total_increment_yuan": total_inc,
-        "new_store_contribution_yuan": new_contrib,
-        "new_store_pct_of_total": _safe_div(new_contrib, total_inc),
-        "same_store_increment_yuan": same_inc,
-        "same_store_pct_of_total": _safe_div(same_inc, total_inc),
+        "整体销售额增量": total_inc,
+        "新店贡献": new_contrib,
+        "新店占整体增量比": _safe_div(new_contrib, total_inc),
+        "同店增量": same_inc,
+        "同店占整体增量比": _safe_div(same_inc, total_inc),
     }
 
 
-def _scope_summary(parsed: dict, shop_ids: set[int]) -> dict[str, Any]:
-    """只算计数 + 双口径汇总 + 同比，不含 TOP/品牌/增长。给 sub_breakdown 用。"""
+def _scope_summary_zh(parsed: dict, shop_ids: set[int]) -> dict[str, Any]:
+    """计数 + 双口径汇总 + 同比，给 sub_breakdown 用。"""
     metrics = parsed["shop_metrics"]
     same_store = parsed["same_store_set"]
     active = {sid for (tag, sid) in metrics if tag == "curr" and sid in shop_ids}
     same_in = shop_ids & same_store
 
-    overall_curr, overall_prev = _agg(metrics, shop_ids)
-    same_curr, same_prev = _agg(metrics, same_in)
+    overall_curr_raw, overall_prev_raw = _agg_raw(metrics, shop_ids)
+    same_curr_raw, same_prev_raw = _agg_raw(metrics, same_in)
 
     return {
-        "store_count": len(active),
-        "same_store_count": len(same_in & active),
-        "new_store_count": len(active - same_store),
-        "overall": overall_curr,
-        "overall_yoy": _yoy_block(overall_curr, overall_prev),
-        "same_store": same_curr,
-        "same_store_yoy": _yoy_block(same_curr, same_prev),
+        "门店数": len(active),
+        "同店数": len(same_in & active),
+        "新店数": len(active - same_store),
+        "整体": _derive_zh(overall_curr_raw),
+        "整体同比": _yoy_block_zh(overall_curr_raw, overall_prev_raw),
+        "同店": _derive_zh(same_curr_raw),
+        "同店同比": _yoy_block_zh(same_curr_raw, same_prev_raw),
     }
 
 
-def _full_scope_view(
+def _full_view_zh(
     parsed: dict,
     *,
     scope_type: str,
-    scope_id: str | None,
     scope_label: str,
     shop_ids: set[int],
     sub_breakdown: list[dict] | None,
+    sub_breakdown_key: str,
 ) -> dict[str, Any]:
-    """region/super_region/national 用：完整视图"""
-    summary = _scope_summary(parsed, shop_ids)
+    """region/super_region/national 用：完整中文视图。"""
+    SCOPE_TYPE_ZH = {"national": "全国", "super_region": "大区", "region": "区域"}
+    summary = _scope_summary_zh(parsed, shop_ids)
     return {
-        "scope_type": scope_type,
-        "scope_id": scope_id,
-        "scope_label": scope_label,
+        "范围类型": SCOPE_TYPE_ZH.get(scope_type, scope_type),
+        "范围名称": scope_label,
         **summary,
-        "sub_breakdown": sub_breakdown or [],
-        "top5_stores": _top_n_stores(parsed, shop_ids, 5),
-        "new_stores": _new_stores_in(parsed, shop_ids),
-        "top20_brands": _top20_brands_in(parsed, shop_ids),
-        "growth_decomposition": _growth_in(parsed, shop_ids),
+        sub_breakdown_key: sub_breakdown or [],
+        "TOP5门店": _top_n_stores_zh(parsed, shop_ids, 5),
+        "新店列表": _new_stores_zh(parsed, shop_ids),
+        "TOP20品牌": _top20_brands_zh(parsed, shop_ids),
+        "增长拆解": _growth_zh(parsed, shop_ids),
     }
 
 
-def _shop_scope_view(parsed: dict, sid: int) -> dict[str, Any] | None:
-    """门店级简化视图（店长版）：自己的指标 + 该门店 TOP10 品牌"""
-    sv = _store_view(parsed, sid)
+def _shop_view_zh(parsed: dict, sid: int) -> dict[str, Any] | None:
+    """门店级简化视图（店长版）。"""
+    sv = _store_view_zh(parsed, sid)
     if sv is None:
         return None
-    # 该门店 TOP10 品牌（不含同店同比，店长视角）
+
     top_brands: list[dict] = []
+    total_sales = 0.0
     for r in parsed["brand_metrics"]:
         if r["shop_id"] != sid or r["period_tag"] != "curr":
             continue
+        total_sales += r["sales_yuan"]
         top_brands.append({
-            "brand_id": r["brand_id"], "brand_name": r["brand_name"],
-            "sales_yuan": r["sales_yuan"], "qty": r["qty"], "orders": r["orders"],
-            "atv": _safe_div(r["sales_yuan"], r["orders"]),
-            "upt": _safe_div(r["qty"], r["orders"]),
+            "品牌ID": r["brand_id"], "品牌名": r["brand_name"],
+            "销售额": r["sales_yuan"], "销量": r["qty"], "订单量": r["orders"],
+            "客单价": _safe_div(r["sales_yuan"], r["orders"]),
+            "连带率": _safe_div(r["qty"], r["orders"]),
         })
-    top_brands.sort(key=lambda x: -x["sales_yuan"])
-    top10 = [{"rank": i + 1, **b} for i, b in enumerate(top_brands[:10])]
+    top_brands.sort(key=lambda x: -x["销售额"])
+    top10 = []
+    for i, b in enumerate(top_brands[:10]):
+        b["销售占比"] = b["销售额"] / total_sales if total_sales else None
+        top10.append({"排名": i + 1, **b})
+
     return {
-        "scope_type": "shop",
-        "scope_id": str(sid),
-        "scope_label": sv["shop_name"],
-        "shop_meta": {k: sv[k] for k in ("shop_id", "shop_name", "region_id", "region_name", "super_region", "opening_date", "is_same_store", "is_new")},
-        "metrics": sv["metrics"],
-        "metrics_yoy": sv["metrics_yoy"],
-        "top10_brands": top10,
+        "范围类型": "门店",
+        "范围名称": sv["门店名"],
+        "门店信息": {k: sv[k] for k in ("门店ID", "门店名", "区域名", "大区", "开业日期", "是否同店", "是否新店")},
+        "指标": sv["指标"],
+        "指标同比": sv["指标同比"],
+        "TOP10品牌": top10,
     }
 
 
@@ -402,60 +435,68 @@ def shape(rows_by_query: dict[str, list[dict[str, Any]]], *, period_type: str | 
 
     scopes: dict[str, Any] = {}
 
-    # ── 区域级 sub_breakdown 模板（national 和 super_region 共用）──
+    # ── 区域级 sub_breakdown 模板 ──
     region_summaries: dict[int, dict] = {}
     for rid, rname in REGIONS.items():
-        rshops = {sid for sid, m in meta.items() if m["region_id"] == rid}
+        rshops = {sid for sid, m in meta.items() if m["区域ID"] == rid}
         region_summaries[rid] = {
-            "scope_type": "region", "id": rid, "name": rname,
-            **_scope_summary(parsed, rshops),
+            "类型": "区域",
+            "ID": rid,
+            "名称": rname,
+            **_scope_summary_zh(parsed, rshops),
         }
 
     # ── 全国 ──
     national_breakdown = sorted(
         region_summaries.values(),
-        key=lambda x: -(x["overall"].get("sales_yuan") or 0),
+        key=lambda x: -(x["整体"].get("销售额") or 0),
     )
-    scopes["national"] = _full_scope_view(
-        parsed, scope_type="national", scope_id=None, scope_label="全国",
+    scopes["national"] = _full_view_zh(
+        parsed, scope_type="national", scope_label="全国",
         shop_ids=all_shops, sub_breakdown=national_breakdown,
+        sub_breakdown_key="区域明细",
     )
 
     # ── 大区 ──
     for sr_name, region_ids in SUPER_REGIONS.items():
-        sr_shops = {sid for sid, m in meta.items() if m["region_id"] in region_ids}
+        sr_shops = {sid for sid, m in meta.items() if m["区域ID"] in region_ids}
         sr_breakdown = sorted(
             (region_summaries[rid] for rid in region_ids if rid in region_summaries),
-            key=lambda x: -(x["overall"].get("sales_yuan") or 0),
+            key=lambda x: -(x["整体"].get("销售额") or 0),
         )
-        scopes[f"super_region:{sr_name}"] = _full_scope_view(
-            parsed, scope_type="super_region", scope_id=sr_name, scope_label=sr_name,
+        scopes[f"super_region:{sr_name}"] = _full_view_zh(
+            parsed, scope_type="super_region", scope_label=sr_name,
             shop_ids=sr_shops, sub_breakdown=sr_breakdown,
+            sub_breakdown_key="区域明细",
         )
 
     # ── 区域 ──
     for rid, rname in REGIONS.items():
-        rshops = {sid for sid, m in meta.items() if m["region_id"] == rid}
-        if not (rshops & active_shops):  # 该区无活跃门店跳过
+        rshops = {sid for sid, m in meta.items() if m["区域ID"] == rid}
+        if not (rshops & active_shops):
             continue
-        # 区域版的 sub_breakdown = 该区门店级简表
         store_breakdown = []
         for s in sorted(rshops, key=lambda s: -(metrics.get(("curr", s), {}).get("sales_yuan", 0.0))):
-            sv = _store_view(parsed, s)
+            sv = _store_view_zh(parsed, s)
             if sv:
                 store_breakdown.append({
-                    "scope_type": "shop", "id": sv["shop_id"], "name": sv["shop_name"],
-                    "is_same_store": sv["is_same_store"], "is_new": sv["is_new"],
-                    "metrics": sv["metrics"], "metrics_yoy": sv["metrics_yoy"],
+                    "类型": "门店",
+                    "ID": sv["门店ID"],
+                    "名称": sv["门店名"],
+                    "是否同店": sv["是否同店"],
+                    "是否新店": sv["是否新店"],
+                    "指标": sv["指标"],
+                    "指标同比": sv["指标同比"],
                 })
-        scopes[f"region:{rid}"] = _full_scope_view(
-            parsed, scope_type="region", scope_id=str(rid), scope_label=rname,
+        scopes[f"region:{rid}"] = _full_view_zh(
+            parsed, scope_type="region", scope_label=rname,
             shop_ids=rshops, sub_breakdown=store_breakdown,
+            sub_breakdown_key="门店明细",
         )
 
     # ── 门店 ──
     for sid in active_shops:
-        v = _shop_scope_view(parsed, sid)
+        v = _shop_view_zh(parsed, sid)
         if v:
             scopes[f"shop:{sid}"] = v
 

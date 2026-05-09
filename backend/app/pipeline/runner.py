@@ -1,4 +1,6 @@
 # 文件作用：流水线执行器 — 两阶段
+# 版本：v0.3.1 — render_prompt 新增【节假日】变量，节假日报告自动从 holidays 表查名字塞进系统信息
+# 版本：v0.3.0 — render_prompt 改用 Python str.format（5 个变量），废弃 jinja2，让业务可读可改
 # 版本：v0.2.1 — dispatch 改用 OAuth 工作通知（userid_list 私发）
 # 版本：v0.2.0 — 拆 dataset_run（SQL+shape）+ report_run（prompt+AI+dispatch）；fanout 按 recipients 展开
 # 版本：v0.1.0 — 单 run 6 步线性
@@ -15,16 +17,17 @@ import traceback
 from datetime import datetime
 from typing import Any
 
-from jinja2 import Environment, StrictUndefined
 from sqlalchemy import desc
 
 from app.doris.connection import query_ro
 from app.models.db import get_session_factory
-from app.models.entities import Dataset, Prompt, Recipient, Run
+from app.models.entities import Dataset, Holiday, Prompt, Recipient, Run
 from app.pipeline import ai_client, data_shaper, dispatcher, sql_loader
 from app.pipeline.data_shaper import REGIONS, SUPER_REGIONS
 
 log = logging.getLogger(__name__)
+
+PERIOD_TYPE_LABEL = {"weekly": "周报", "monthly": "月报", "holiday": "节假日"}
 
 
 class StageError(Exception):
@@ -115,15 +118,34 @@ def execute_dataset_run(dataset_id: int) -> None:
 # ───────────────────── 阶段 B：report_run ─────────────────────
 
 def _wrap_html(title: str, body: str) -> str:
+    """外层 HTML 骨架 + 兜底 CSS。AI 输出会被包在这里面。
+    兜底 CSS 提供：连续滚动版式、深色表头、红涨绿跌、克制留白。
+    """
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
 <style>
+*{{box-sizing:border-box}}
 body{{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
-max-width:880px;margin:32px auto;padding:0 20px;color:#222;line-height:1.7}}
-h1,h2,h3{{color:#0f172a}} table{{border-collapse:collapse;width:100%;margin:12px 0}}
-th,td{{border:1px solid #e2e8f0;padding:6px 10px;text-align:left}}
-th{{background:#f8fafc}} pre{{background:#f8fafc;padding:12px;overflow:auto}}
+  max-width:960px;margin:40px auto;padding:0 24px;color:#333;line-height:1.7;background:#fff}}
+h1{{font-size:28px;font-weight:700;color:#0f172a;margin:0 0 8px}}
+h2{{font-size:22px;font-weight:700;color:#0f172a;margin:48px 0 16px;
+  padding-left:12px;border-left:4px solid #0f172a}}
+h3{{font-size:17px;font-weight:600;color:#0f172a;margin:24px 0 10px}}
+p{{margin:10px 0}}
+strong{{color:#0f172a}}
+table{{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px;
+  border:1px solid #e5e7eb}}
+th{{background:#1f2937;color:#fff;font-weight:600;padding:12px 14px;text-align:left;
+  border-bottom:1px solid #1f2937;white-space:nowrap}}
+td{{padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:left}}
+tr:nth-child(even) td{{background:#fafafa}}
+/* 同比涨跌色：红涨绿跌（中国财经惯例）。AI 用 class="up"/"down" 或直接 inline color */
+.up,td.up{{color:#dc2626;font-weight:600}}
+.down,td.down{{color:#059669;font-weight:600}}
+ul,ol{{padding-left:24px}}
+section,.card,.section{{background:transparent !important;box-shadow:none !important;
+  border:none !important;padding:0 !important;border-radius:0 !important}}
 </style></head><body>
 {body}
 </body></html>"""
@@ -185,20 +207,30 @@ def execute_report_run(run_id: int) -> None:
                 raise RuntimeError(
                     f"找不到 active prompt: report_type={run.report_type} scope_type={run.scope_type}"
                 )
-            env = Environment(undefined=StrictUndefined, autoescape=False)
-            env.filters["tojson"] = lambda v, **kw: json.dumps(v, ensure_ascii=False, default=str)
-            tpl = env.from_string(prompt_row.content or "")
-            rendered = tpl.render(
-                period_start=run.period_start,
-                period_end=run.period_end,
-                period_start_str=run.period_start.strftime("%Y-%m-%d") if run.period_start else "",
-                period_end_str=run.period_end.strftime("%Y-%m-%d") if run.period_end else "",
-                scope_type=run.scope_type,
-                scope_id=run.scope_id,
-                scope_label=run.scope_label,
-                data=slice_data,
-                meta=shaped.get("_meta", {}),
-            )
+            # 用「中文方括号」直接 str.replace；业务在 prompt 里看到的【范围】【时间段】等
+            # 就是真正的填空，不需要懂任何代码符号。
+            holiday_name = ""
+            if run.report_type == "holiday" and run.period_start and run.period_end:
+                hol = (
+                    db.query(Holiday)
+                    .filter(
+                        Holiday.start_date == run.period_start.date(),
+                        Holiday.end_date == run.period_end.date(),
+                    )
+                    .first()
+                )
+                holiday_name = hol.name if hol else ""
+            vars_zh = {
+                "【范围】": run.scope_label or ("全国" if run.scope_type == "national" else ""),
+                "【报告类型】": PERIOD_TYPE_LABEL.get(run.report_type, run.report_type),
+                "【节假日】": holiday_name,
+                "【开始日期】": run.period_start.strftime("%Y-%m-%d") if run.period_start else "",
+                "【结束日期】": run.period_end.strftime("%Y-%m-%d") if run.period_end else "",
+                "【本期数据】": json.dumps(slice_data, ensure_ascii=False, default=str, indent=2),
+            }
+            rendered = prompt_row.content or ""
+            for k, v in vars_zh.items():
+                rendered = rendered.replace(k, v)
             _save(db, run, prompt_id=prompt_row.id, prompt_rendered=rendered)
         except Exception as e:
             raise StageError(5, f"render_prompt 失败: {e}") from e

@@ -1,4 +1,5 @@
-// 文件作用：Run 详情页 — 6 步流水线可视化
+// 文件作用：Run 详情页 — scope 标识 + 内嵌报告预览 + 6 步流水线
+// 版本：v0.3.0 — 顶部加 scope 标识；新增「报告预览」区（iframe 内嵌 /reports/{id}）
 // 版本：v0.2.0 — 头部展示本次实际使用的 prompt 版本（点击跳转）
 "use client";
 
@@ -37,7 +38,11 @@ export default function RunDetail({ params }: { params: { id: string } }) {
             <span className={`inline-block px-2 py-0.5 rounded border text-xs ${statusColor(r.status)}`}>{r.status}</span>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            {r.report_type} · {r.trigger_type} · 模型 <span className="font-mono">{r.model ?? "-"}</span>
+            {r.report_type} · <span className="font-medium text-slate-700">{r.scope_label || (r.scope_type === "national" ? "全国" : r.scope_type || "-")}</span>
+            {r.scope_type && r.scope_type !== "national" && (
+              <span className="text-slate-400"> ({r.scope_type})</span>
+            )}
+            {" · "}{r.trigger_type} · 模型 <span className="font-mono">{r.model ?? "-"}</span>
             {" · "}
             Prompt {r.prompt_name ? (
               <Link href={`/prompts?highlight=${r.prompt_id}`} className="text-brand-600 hover:underline font-medium">
@@ -65,6 +70,29 @@ export default function RunDetail({ params }: { params: { id: string } }) {
         <section className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="text-xs text-red-700 font-medium mb-1">错误信息</div>
           <pre className="text-xs text-red-900 whitespace-pre-wrap">{r.error_message}</pre>
+        </section>
+      )}
+
+      {r.status === "success" && (
+        <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-slate-800">📄 报告预览</div>
+              <div className="text-xs text-slate-500 mt-0.5">AI 渲染后的 HTML 报告（钉钉 ActionCard 跳转的目标页）</div>
+            </div>
+            <a
+              href={`http://localhost:8000/reports/${r.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-brand-600 hover:underline"
+            >新窗口打开 ↗</a>
+          </div>
+          <iframe
+            src={`http://localhost:8000/reports/${r.id}`}
+            className="w-full"
+            style={{ height: "70vh", border: "0" }}
+            title={`Run ${r.id} report`}
+          />
         </section>
       )}
 

@@ -1,13 +1,23 @@
-// 文件作用：Dashboard 首页 — 概览 + 触发表单 + 最近 runs
-// 版本：v0.3.0 — Prompt 下拉去掉"留空"项，默认选中当前生产版本
+// 文件作用：Dashboard 首页 — 概览 + 触发表单（报告类型 × 范围 × 范围标的）+ 最近 runs
+// 版本：v0.5.0 — 触发表单选择持久化到 localStorage，跨页面切换不丢
+// 版本：v0.4.0 — 触发表单去掉 prompt 选择器（自动锁定生产版），新增 scope_type/scope_id 联动选择
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, type Prompt, type Shop } from "@/lib/api";
 import { fmtDate, fmtNum, statusColor } from "@/lib/utils";
-import { Play, Activity } from "lucide-react";
+import { Play, Activity, ChevronDown, ChevronRight } from "lucide-react";
+
+const SCOPE_LABEL: Record<string, string> = {
+  national: "全国",
+  super_region: "大区",
+  region: "区域",
+  shop: "门店",
+};
+
+const TRIGGER_FORM_STORAGE_KEY = "dashboard.triggerForm.v1";
 
 export default function Dashboard() {
   const qc = useQueryClient();
@@ -15,39 +25,103 @@ export default function Dashboard() {
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.listRuns });
   const prompts = useQuery({ queryKey: ["prompts"], queryFn: () => api.listPrompts() });
+  const regions = useQuery({ queryKey: ["regions"], queryFn: api.regions });
+  const shops = useQuery({ queryKey: ["shops"], queryFn: api.listShops });
 
   const [reportType, setReportType] = useState("weekly");
+  const [scopeType, setScopeType] = useState<"national" | "super_region" | "region" | "shop">("national");
+  const [scopeId, setScopeId] = useState<string>("");
   const [model, setModel] = useState<string>("");
-  const [promptId, setPromptId] = useState<number | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [overridePromptId, setOverridePromptId] = useState<number | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
-  const promptOptions = useMemo(() => {
-    return (prompts.data ?? [])
-      .filter((p) => p.report_type === reportType)
-      .sort((a, b) => b.version - a.version);
-  }, [prompts.data, reportType]);
-
-  // 切换报告类型 / prompts 加载完成时，默认选中当前生产版（找不到就第一条）
+  // localStorage 加载（只在 mount 时跑一次）
   useEffect(() => {
-    if (promptOptions.length === 0) {
-      setPromptId(null);
-      return;
+    try {
+      const raw = localStorage.getItem(TRIGGER_FORM_STORAGE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (typeof s.reportType === "string") setReportType(s.reportType);
+        if (typeof s.scopeType === "string") setScopeType(s.scopeType);
+        if (typeof s.scopeId === "string") setScopeId(s.scopeId);
+        if (typeof s.model === "string") setModel(s.model);
+        if (typeof s.showAdvanced === "boolean") setShowAdvanced(s.showAdvanced);
+        if (s.overridePromptId === null || typeof s.overridePromptId === "number") {
+          setOverridePromptId(s.overridePromptId);
+        }
+      }
+    } catch {}
+    setHydrated(true);
+  }, []);
+
+  // localStorage 持久化（hydrate 之后才写，避免初始默认值覆盖用户偏好）
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(
+        TRIGGER_FORM_STORAGE_KEY,
+        JSON.stringify({ reportType, scopeType, scopeId, model, showAdvanced, overridePromptId })
+      );
+    } catch {}
+  }, [hydrated, reportType, scopeType, scopeId, model, showAdvanced, overridePromptId]);
+
+  // 自动锁定的 prompt（按 report_type + scope_type 找 active）
+  const lockedPrompt = useMemo<Prompt | null>(() => {
+    return (
+      (prompts.data ?? []).find(
+        (p) => p.report_type === reportType && (p.scope_type ?? "national") === scopeType && p.is_active
+      ) ?? null
+    );
+  }, [prompts.data, reportType, scopeType]);
+
+  // 切换 scope 时清掉 scopeId（hydrate 之前跳过，避免清掉刚从 localStorage 恢复的值）
+  useEffect(() => {
+    if (!hydrated) return;
+    setScopeId("");
+    setOverridePromptId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeType, reportType]);
+
+  // 范围标的的可选项
+  const scopeIdOptions = useMemo(() => {
+    if (scopeType === "super_region") {
+      return Object.keys(regions.data?.super_regions ?? {}).map((name) => ({ value: name, label: name }));
     }
-    const stillValid = promptOptions.some((p) => p.id === promptId);
-    if (!stillValid) {
-      const active = promptOptions.find((p) => p.is_active);
-      setPromptId((active ?? promptOptions[0]).id);
+    if (scopeType === "region") {
+      return Object.entries(regions.data?.regions ?? {}).map(([id, name]) => ({ value: String(id), label: `${name} (${id})` }));
     }
-  }, [promptOptions, promptId]);
+    if (scopeType === "shop") {
+      return (shops.data?.shops ?? []).map((s: Shop) => ({
+        value: String(s.shop_id),
+        label: `${s.shop_name} · ${s.region_name ?? "?"} (${s.shop_id})`,
+      }));
+    }
+    return [];
+  }, [scopeType, regions.data, shops.data]);
 
   const trigger = useMutation({
     mutationFn: () =>
       api.triggerRun({
         report_type: reportType,
+        scope_type: scopeType,
+        scope_id: scopeType === "national" ? null : (scopeId || null),
         model: model || undefined,
-        prompt_id: promptId ?? undefined,
+        prompt_id: overridePromptId ?? undefined,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["runs"] }),
   });
+
+  const promptOptionsForOverride = useMemo(() => {
+    return (prompts.data ?? [])
+      .filter((p) => p.report_type === reportType && (p.scope_type ?? "national") === scopeType)
+      .sort((a, b) => b.version - a.version);
+  }, [prompts.data, reportType, scopeType]);
+
+  const canTrigger =
+    !!lockedPrompt &&
+    (scopeType === "national" || !!scopeId) &&
+    !trigger.isPending;
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -69,6 +143,7 @@ export default function Dashboard() {
         <h2 className="text-base font-medium text-slate-800 mb-4 flex items-center gap-2">
           <Play className="w-4 h-4" /> 手动触发一次 pipeline
         </h2>
+
         <div className="flex flex-wrap gap-3 items-end">
           <Field label="报告类型">
             <select className="select" value={reportType} onChange={(e) => setReportType(e.target.value)}>
@@ -77,6 +152,31 @@ export default function Dashboard() {
               <option value="holiday">节假日</option>
             </select>
           </Field>
+
+          <Field label="范围">
+            <select className="select" value={scopeType} onChange={(e) => setScopeType(e.target.value as typeof scopeType)}>
+              <option value="national">全国</option>
+              <option value="super_region">大区</option>
+              <option value="region">区域</option>
+              <option value="shop">门店</option>
+            </select>
+          </Field>
+
+          {scopeType !== "national" && (
+            <Field label={`选择${SCOPE_LABEL[scopeType]}`}>
+              <select
+                className="select min-w-[200px]"
+                value={scopeId}
+                onChange={(e) => setScopeId(e.target.value)}
+              >
+                <option value="">请选择…</option>
+                {scopeIdOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+
           <Field label="模型 (留空走默认)">
             <select className="select" value={model} onChange={(e) => setModel(e.target.value)}>
               <option value="">默认 ({models.data?.default ?? "-"})</option>
@@ -85,26 +185,10 @@ export default function Dashboard() {
               ))}
             </select>
           </Field>
-          <Field label="Prompt 版本">
-            {promptOptions.length === 0 ? (
-              <div className="select text-xs text-amber-700 bg-amber-50 border-amber-300">⚠ 该类型暂无 prompt，请先到 Prompts 页创建</div>
-            ) : (
-              <select
-                className="select"
-                value={promptId ?? ""}
-                onChange={(e) => setPromptId(Number(e.target.value))}
-              >
-                {promptOptions.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} v{p.version}{p.is_active ? " · 生产" : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
+
           <button
             className="px-4 py-2 bg-brand-500 text-white rounded-md text-sm font-medium hover:bg-brand-600 disabled:opacity-50"
-            disabled={trigger.isPending || promptOptions.length === 0}
+            disabled={!canTrigger}
             onClick={() => trigger.mutate()}
           >
             {trigger.isPending ? "触发中…" : "触发 Run"}
@@ -112,13 +196,51 @@ export default function Dashboard() {
           {trigger.isSuccess && (
             <span className="text-xs text-emerald-600">
               ✓ 已创建 run #{trigger.data.id}
-              {trigger.data.prompt_name && ` · 用 ${trigger.data.prompt_name} v${trigger.data.prompt_version}`}
             </span>
           )}
         </div>
-        <p className="text-xs text-slate-500 mt-3">
-          v0.2.0 仅写入 pending 占位记录；未指定 Prompt 版本时自动锁定当前生产版，确保历史可追溯。
-        </p>
+
+        {/* 自动锁定的 prompt 信息 */}
+        <div className="mt-3 text-xs text-slate-600">
+          {lockedPrompt ? (
+            <>
+              将使用 prompt:{" "}
+              <Link href={`/prompts?highlight=${lockedPrompt.id}`} className="font-mono text-brand-600 hover:underline">
+                {lockedPrompt.name}
+              </Link>
+              <span className="text-slate-400 ml-1">（按「报告类型 × 范围」自动锁定）</span>
+            </>
+          ) : (
+            <span className="text-amber-700">⚠ {SCOPE_LABEL[scopeType]} 维度暂无 {reportType} prompt，请先到 Prompts 页配置</span>
+          )}
+        </div>
+
+        {/* 高级折叠 */}
+        <button
+          className="mt-3 text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1"
+          onClick={() => setShowAdvanced((v) => !v)}
+        >
+          {showAdvanced ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          高级
+        </button>
+        {showAdvanced && (
+          <div className="mt-2 pl-4 border-l-2 border-slate-200">
+            <Field label="覆盖 Prompt（仅排查/对比时用）">
+              <select
+                className="select"
+                value={overridePromptId ?? ""}
+                onChange={(e) => setOverridePromptId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">使用自动锁定版</option>
+                {promptOptionsForOverride.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    #{p.id} {p.name}{p.is_active ? " · 默认" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
       </section>
 
       {/* 最近 runs */}
@@ -133,7 +255,7 @@ export default function Dashboard() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs">
               <tr>
-                <Th>ID</Th><Th>类型</Th><Th>触发</Th><Th>模型</Th><Th>Prompt</Th><Th>状态</Th>
+                <Th>ID</Th><Th>类型</Th><Th>范围</Th><Th>触发</Th><Th>模型</Th><Th>Prompt</Th><Th>状态</Th>
                 <Th>Tokens</Th><Th>耗时</Th><Th>开始</Th>
               </tr>
             </thead>
@@ -142,12 +264,15 @@ export default function Dashboard() {
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50">
                   <Td><Link href={`/runs/${r.id}`} className="text-brand-600 hover:underline">#{r.id}</Link></Td>
                   <Td>{r.report_type}</Td>
+                  <Td className="text-xs">
+                    <span className="font-medium">{r.scope_label || (r.scope_type === "national" ? "全国" : "-")}</span>
+                  </Td>
                   <Td>{r.trigger_type}</Td>
                   <Td className="font-mono text-xs">{r.model ?? "-"}</Td>
                   <Td className="text-xs">
                     {r.prompt_name ? (
                       <Link href={`/prompts?highlight=${r.prompt_id}`} className="text-brand-600 hover:underline">
-                        {r.prompt_name} v{r.prompt_version}
+                        {r.prompt_name}
                       </Link>
                     ) : (
                       <span className="text-slate-400">-</span>
@@ -164,7 +289,7 @@ export default function Dashboard() {
                 </tr>
               ))}
               {runs.data?.length === 0 && (
-                <tr><td colSpan={9} className="text-center text-slate-400 py-8 text-xs">暂无运行记录，点上方"触发 Run"试试</td></tr>
+                <tr><td colSpan={10} className="text-center text-slate-400 py-8 text-xs">暂无运行记录，点上方"触发 Run"试试</td></tr>
               )}
             </tbody>
           </table>

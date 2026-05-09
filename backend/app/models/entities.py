@@ -20,10 +20,10 @@ class Base(DeclarativeBase):
 
 
 def _gen_id() -> int:
-    """客户端生成 BIGINT id：毫秒时间戳 << 20 | 随机 20 位。
-    Doris 不回填 AUTO_INCREMENT，所以应用层自己给 id。
-    冲突概率：同毫秒 1M 桶随机，足够。"""
-    return (int(time.time() * 1000) << 20) | random.getrandbits(20)
+    """客户端生成 BIGINT id，**必须 < 2^53 (JS Number 安全上限)**。
+    毫秒时间戳(13位≈1.7e12) << 10 | 10位随机 = 约 1.7e15 < 9e15 ✅。
+    同毫秒 1024 个桶，单进程足够。"""
+    return ((int(time.time() * 1000) - 1700000000000) << 10) | random.getrandbits(10)
 
 
 class Dataset(Base):
