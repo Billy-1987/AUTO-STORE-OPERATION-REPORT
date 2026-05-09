@@ -1,4 +1,5 @@
 // 文件作用：完整 runs 列表页
+// 版本：v0.6.0 — 加成本列（¥）+ 行尾删除按钮
 // 版本：v0.5.0 — 加筛选器：状态 / 报告类型 / 范围 / 关键字（搜 scope_label/run id）
 // 版本：v0.4.0 — 新增 scope 列（national/super_region/region/shop）+ 查看报告快捷入口
 // 版本：v0.3.0 — failed 状态 hover 显示 error_message；点击跳详情；行尾"查看报告"快捷入口
@@ -6,9 +7,10 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { fmtDate, fmtNum, statusColor } from "@/lib/utils";
+import { Trash2 } from "lucide-react";
 
 const REPORT_TYPE_LABEL: Record<string, string> = {
   weekly: "周报",
@@ -29,7 +31,12 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default function RunsPage() {
+  const qc = useQueryClient();
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.listRuns });
+  const del = useMutation({
+    mutationFn: (id: number) => api.deleteRun(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["runs"] }),
+  });
 
   const [status, setStatus] = useState<string>("all");
   const [reportType, setReportType] = useState<string>("all");
@@ -132,9 +139,11 @@ export default function RunsPage() {
                 <th className="text-left px-4 py-2 font-medium">Prompt</th>
                 <th className="text-left px-4 py-2 font-medium">状态</th>
                 <th className="text-left px-4 py-2 font-medium">Tokens</th>
+                <th className="text-left px-4 py-2 font-medium">成本</th>
                 <th className="text-left px-4 py-2 font-medium">耗时</th>
                 <th className="text-left px-4 py-2 font-medium">开始时间</th>
                 <th className="text-left px-4 py-2 font-medium">报告</th>
+                <th className="text-left px-4 py-2 font-medium w-10"></th>
               </tr>
             </thead>
             <tbody>
@@ -174,7 +183,16 @@ export default function RunsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2">{fmtNum(r.total_tokens)}</td>
+                  <td className="px-4 py-2" title={
+                    r.prompt_tokens != null || r.completion_tokens != null
+                      ? `输入 ${fmtNum(r.prompt_tokens)} / 输出 ${fmtNum(r.completion_tokens)}`
+                      : undefined
+                  }>{fmtNum(r.total_tokens)}</td>
+                  <td className="px-4 py-2 text-xs">
+                    {r.cost_estimate != null && r.cost_estimate > 0
+                      ? <span className="text-slate-700">¥{r.cost_estimate.toFixed(4)}</span>
+                      : <span className="text-slate-300">-</span>}
+                  </td>
                   <td className="px-4 py-2">{r.latency_ms != null ? `${(r.latency_ms / 1000).toFixed(1)}s` : "-"}</td>
                   <td className="px-4 py-2 text-xs text-slate-500">{fmtDate(r.started_at)}</td>
                   <td className="px-4 py-2 text-xs">
@@ -189,10 +207,25 @@ export default function RunsPage() {
                       <span className="text-slate-300">-</span>
                     )}
                   </td>
+                  <td className="px-4 py-2 text-right">
+                    <button
+                      className="text-slate-400 hover:text-red-600 disabled:opacity-30"
+                      disabled={r.status === "running" || (del.isPending && del.variables === r.id)}
+                      title={r.status === "running" ? "运行中不允许删除" : "删除这条 run"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`确定删除 Run #${r.id}？同时会清除报告 HTML 和 reports 行。`)) {
+                          del.mutate(r.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={11} className="text-center text-slate-400 py-8 text-xs">
+                <tr><td colSpan={13} className="text-center text-slate-400 py-8 text-xs">
                   {total === 0 ? "暂无运行记录" : "没有符合筛选条件的记录"}
                 </td></tr>
               )}

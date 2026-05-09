@@ -249,6 +249,7 @@ def execute_report_run(run_id: int) -> None:
                 response_text=result.text, response_html=html,
                 prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
                 total_tokens=result.total_tokens, latency_ms=result.latency_ms, model=result.model,
+                cost_estimate=result.cost_cny,
             )
         except Exception as e:
             raise StageError(6, f"ai_call 失败: {e}") from e

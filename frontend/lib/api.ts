@@ -1,4 +1,5 @@
 // 文件作用：前端 API client + 类型定义
+// 版本：v0.6.0 — RunSummary 加 prompt/completion_tokens + cost_estimate；加 deleteRun
 // 版本：v0.5.2 — 加 getRunDispatch（run 详情页 ⑥ 步钉钉分发展示）
 // 版本：v0.5.1 — 加 listHolidays（系统信息页展示节假日日期）
 // 版本：v0.5.0 — Prompt 改原地编辑：去掉 create/activate/delete，加 updatePrompt；加 listShops
@@ -28,7 +29,10 @@ export type RunSummary = {
   status: string;
   period_start: string | null;
   period_end: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
   total_tokens: number | null;
+  cost_estimate: number | null;
   latency_ms: number | null;
   started_at: string;
   finished_at: string | null;
@@ -44,9 +48,6 @@ export type RunDetail = RunSummary & {
   prompt_rendered: string | null;
   response_text: string | null;
   response_html: string | null;
-  prompt_tokens: number | null;
-  completion_tokens: number | null;
-  cost_estimate: number | null;
 };
 
 export type Prompt = {
@@ -122,6 +123,10 @@ export const api = {
   listRuns: () => http<RunSummary[]>("/api/runs"),
   getRun: (id: number) => http<RunDetail>(`/api/runs/${id}`),
   getRunDispatch: (id: number) => http<DispatchInfo>(`/api/runs/${id}/dispatch`),
+  deleteRun: (id: number) =>
+    http<{ deleted_run: number; deleted_reports: number; html_removed: boolean }>(
+      `/api/runs/${id}`, { method: "DELETE" }
+    ),
   triggerRun: (body: { report_type: string; scope_type?: string; scope_id?: string | null; scope_label?: string; model?: string; prompt_id?: number; period_start?: string; period_end?: string; dataset_id?: number }) =>
     http<RunSummary>("/api/runs/manual", { method: "POST", body: JSON.stringify(body) }),
 

@@ -1,10 +1,12 @@
 # 文件作用：runs 列表/详情/手动触发 API
+# 版本：v0.6.0 — RunSummary 加 prompt/completion_tokens + cost_estimate；新增 DELETE /{id}（连 Report + html）
 # 版本：v0.5.0 — 新增 GET /{id}/dispatch：暴露第 6 步钉钉分发结果 + 命中的收件人
 # 版本：v0.4.0 — 适配两阶段 runner：/manual 自动建 dataset+report_run；新增 scope 字段
 # 版本：v0.3.0 — /manual 创建 pending 后立刻通过 BackgroundTasks 派发到 runner；新增 /retry 重跑
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
@@ -30,7 +32,10 @@ class RunSummary(BaseModel):
     status: str
     period_start: datetime | None
     period_end: datetime | None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     total_tokens: int | None
+    cost_estimate: float | None = None
     latency_ms: int | None
     started_at: datetime
     finished_at: datetime | None
@@ -46,9 +51,6 @@ class RunDetail(RunSummary):
     prompt_rendered: str | None
     response_text: str | None
     response_html: str | None
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    cost_estimate: float | None
 
 
 class ManualRunRequest(BaseModel):
@@ -250,6 +252,31 @@ def get_run_dispatch(run_id: int, db: Session = Depends(get_db)):
         response=parsed_response,
         recipients=matched,
     )
+
+
+REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "reports"
+
+
+@router.delete("/{run_id}")
+def delete_run(run_id: int, db: Session = Depends(get_db)):
+    """删一条 run：级联删 Report 行 + 落盘 HTML。Dataset 不动（多 run 共享）。"""
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+    if run.status == "running":
+        raise HTTPException(409, "run 正在执行中，不允许删除")
+
+    deleted_reports = db.query(Report).filter(Report.run_id == run_id).delete()
+    db.delete(run)
+    db.commit()
+
+    html_file = REPORTS_DIR / f"{run_id}.html"
+    html_removed = False
+    if html_file.exists():
+        html_file.unlink()
+        html_removed = True
+
+    return {"deleted_run": run_id, "deleted_reports": deleted_reports, "html_removed": html_removed}
 
 
 @router.post("/{run_id}/retry", response_model=RunSummary)
