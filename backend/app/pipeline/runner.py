@@ -1,4 +1,5 @@
 # 文件作用：流水线执行器 — 两阶段
+# 版本：v0.3.2 — stage 4 select_slice 失败的报错改成业务可读（带范围名+周期+缺数原因）
 # 版本：v0.3.1 — render_prompt 新增【节假日】变量，节假日报告自动从 holidays 表查名字塞进系统信息
 # 版本：v0.3.0 — render_prompt 改用 Python str.format（5 个变量），废弃 jinja2，让业务可读可改
 # 版本：v0.2.1 — dispatch 改用 OAuth 工作通知（userid_list 私发）
@@ -183,7 +184,23 @@ def execute_report_run(run_id: int) -> None:
             scope_key = _scope_key(run.scope_type, run.scope_id)
             slice_data = shaped["scopes"].get(scope_key)
             if slice_data is None:
-                raise RuntimeError(f"scope_key={scope_key} 不在 dataset.scopes 中")
+                meta = shaped.get("_meta") or {}
+                period = f"{meta.get('period_start') or '?'} ~ {meta.get('period_end') or '?'}"
+                scope_label = {
+                    "national": "全国",
+                    "super_region": f"大区「{run.scope_id}」",
+                    "region": f"区域 ID={run.scope_id}",
+                    "shop": f"门店 ID={run.scope_id}",
+                }.get(run.scope_type, f"{run.scope_type}:{run.scope_id}")
+                if run.scope_type == "shop":
+                    hint = "该门店在所选周期内没有销售/订单数据（可能未开业、已闭店或当期无流水），无法生成报告。"
+                elif run.scope_type == "region":
+                    hint = "该区域在所选周期内所有门店都没有销售数据。"
+                else:
+                    hint = "数据集中找不到对应切片，请检查范围选择是否与本次 dataset 的周期匹配。"
+                raise RuntimeError(
+                    f"{scope_label} 在周期 {period} 内无可用数据：{hint}"
+                )
         except Exception as e:
             raise StageError(4, f"select_slice 失败: {e}") from e
 
