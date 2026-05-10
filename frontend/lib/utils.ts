@@ -14,6 +14,22 @@ export function fmtDate(s: string | null | undefined): string {
   return d.toLocaleString("zh-CN", { hour12: false });
 }
 
+export function fmtRel(s: string | null | undefined): string {
+  if (!s) return "-";
+  const d = new Date(s);
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return "刚刚";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小时前`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day} 天前`;
+  if (day < 30) return `${Math.floor(day / 7)} 周前`;
+  return d.toLocaleDateString("zh-CN");
+}
+
 export function fmtNum(n: number | null | undefined): string {
   if (n == null) return "-";
   return n.toLocaleString("zh-CN");

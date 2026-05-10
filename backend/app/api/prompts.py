@@ -1,10 +1,10 @@
-# 文件作用：prompts 版本管理 API
-# 版本：v0.1.0
+# 文件作用：prompts 模板管理 API（每 (report_type, scope_type) 一份，原地编辑）
+# 版本：v0.5.0 — 取消版本/激活/删除/新建；只剩 list/get/update。是否需要还原历史版本走 git。
 
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import desc, and_
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models.db import get_db
@@ -17,6 +17,7 @@ class PromptOut(BaseModel):
     id: int
     name: str
     report_type: str
+    scope_type: str | None = None
     version: int
     content: str | None
     description: str | None
@@ -26,13 +27,10 @@ class PromptOut(BaseModel):
     updated_at: datetime
 
 
-class PromptCreate(BaseModel):
-    name: str
-    report_type: str
-    content: str
+class PromptUpdate(BaseModel):
+    content: str | None = None
     description: str | None = None
     model: str | None = None
-    set_active: bool = False
 
 
 @router.get("", response_model=list[PromptOut])
@@ -51,47 +49,19 @@ def get_prompt(prompt_id: int, db: Session = Depends(get_db)):
     return PromptOut.model_validate(p, from_attributes=True)
 
 
-@router.post("", response_model=PromptOut)
-def create_prompt(req: PromptCreate, db: Session = Depends(get_db)):
-    """创建新版本（同 name 自动 +1）"""
-    last = (
-        db.query(Prompt)
-        .filter(Prompt.name == req.name)
-        .order_by(desc(Prompt.version))
-        .first()
-    )
-    next_version = (last.version + 1) if last else 1
-
-    if req.set_active:
-        db.query(Prompt).filter(
-            and_(Prompt.name == req.name, Prompt.is_active == 1)
-        ).update({"is_active": 0})
-
-    p = Prompt(
-        name=req.name,
-        report_type=req.report_type,
-        version=next_version,
-        content=req.content,
-        description=req.description,
-        model=req.model,
-        is_active=1 if req.set_active else 0,
-    )
-    db.add(p)
-    db.commit()
-    # Doris 不返回 autoincrement，重新查
-    p = db.query(Prompt).filter(Prompt.name == req.name, Prompt.version == next_version).first()
-    return PromptOut.model_validate(p, from_attributes=True)
-
-
-@router.post("/{prompt_id}/activate", response_model=PromptOut)
-def activate_prompt(prompt_id: int, db: Session = Depends(get_db)):
+@router.put("/{prompt_id}", response_model=PromptOut)
+def update_prompt(prompt_id: int, req: PromptUpdate, db: Session = Depends(get_db)):
+    """原地更新 content / description / model。不允许改 name/report_type/scope_type/version。"""
     p = db.get(Prompt, prompt_id)
     if not p:
         raise HTTPException(404, "prompt not found")
-    db.query(Prompt).filter(
-        and_(Prompt.name == p.name, Prompt.is_active == 1)
-    ).update({"is_active": 0})
-    p.is_active = 1
+    if req.content is not None:
+        p.content = req.content
+    if req.description is not None:
+        p.description = req.description
+    if req.model is not None:
+        p.model = req.model or None
+    p.updated_at = datetime.now()
     db.commit()
     p = db.get(Prompt, prompt_id)
     return PromptOut.model_validate(p, from_attributes=True)

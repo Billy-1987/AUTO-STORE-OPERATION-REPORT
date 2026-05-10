@@ -1,5 +1,5 @@
 // 文件作用：收件人管理页
-// 版本：v0.1.0
+// 版本：v0.2.0 — 表单加 mobile 字段；userid 改为"自动解析"（保存时后端按 mobile 查钉钉）
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,7 +27,7 @@ export default function RecipientsPage() {
       <header className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">收件人</h1>
-          <p className="text-sm text-slate-500 mt-1">钉钉推送目标列表，按角色 + 区域/门店路由</p>
+          <p className="text-sm text-slate-500 mt-1">钉钉「工作通知」私发对象，保存时按手机号自动解析 UserID</p>
         </div>
         <button className="btn-primary" onClick={() => setShowNew(!showNew)}>{showNew ? "取消" : "添加收件人"}</button>
       </header>
@@ -43,6 +43,7 @@ export default function RecipientsPage() {
                 <th className="text-left px-4 py-2 font-medium">角色</th>
                 <th className="text-left px-4 py-2 font-medium">区域</th>
                 <th className="text-left px-4 py-2 font-medium">门店</th>
+                <th className="text-left px-4 py-2 font-medium">手机号</th>
                 <th className="text-left px-4 py-2 font-medium">钉钉 UserID</th>
                 <th className="text-left px-4 py-2 font-medium">订阅</th>
                 <th className="text-left px-4 py-2 font-medium">操作</th>
@@ -55,7 +56,10 @@ export default function RecipientsPage() {
                   <td className="px-4 py-2">{ROLES.find((x) => x.v === r.role)?.n ?? r.role}</td>
                   <td className="px-4 py-2 text-xs">{r.region_ids.length ? r.region_ids.join(", ") : "-"}</td>
                   <td className="px-4 py-2 text-xs">{r.shop_ids.length ? r.shop_ids.join(", ") : "-"}</td>
-                  <td className="px-4 py-2 text-xs font-mono">{r.dingtalk_userid ?? "-"}</td>
+                  <td className="px-4 py-2 text-xs font-mono">{r.dingtalk_mobile ?? "-"}</td>
+                  <td className="px-4 py-2 text-xs font-mono">
+                    {r.dingtalk_userid ? r.dingtalk_userid : <span className="text-amber-600" title="未解析，钉钉推送会跳过此人">未解析</span>}
+                  </td>
                   <td className="px-4 py-2 text-xs space-x-1">
                     {r.subscribe_weekly ? <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">周</span> : null}
                     {r.subscribe_monthly ? <span className="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded">月</span> : null}
@@ -67,7 +71,7 @@ export default function RecipientsPage() {
                 </tr>
               ))}
               {list.data?.length === 0 && (
-                <tr><td colSpan={7} className="text-center text-slate-400 py-8 text-xs">暂无收件人</td></tr>
+                <tr><td colSpan={8} className="text-center text-slate-400 py-8 text-xs">暂无收件人</td></tr>
               )}
             </tbody>
           </table>
@@ -82,6 +86,7 @@ function NewForm({ onDone }: { onDone: () => void }) {
   const [role, setRole] = useState("regional_manager");
   const [regions, setRegions] = useState("");
   const [shops, setShops] = useState("");
+  const [mobile, setMobile] = useState("");
   const [userid, setUserid] = useState("");
 
   const create = useMutation({
@@ -90,6 +95,7 @@ function NewForm({ onDone }: { onDone: () => void }) {
       role,
       region_ids: regions.split(",").map((s) => parseInt(s.trim())).filter((n) => !isNaN(n)),
       shop_ids: shops.split(",").map((s) => parseInt(s.trim())).filter((n) => !isNaN(n)),
+      dingtalk_mobile: mobile || undefined,
       dingtalk_userid: userid || undefined,
     }),
     onSuccess: onDone,
@@ -109,7 +115,11 @@ function NewForm({ onDone }: { onDone: () => void }) {
           </select>
         </label>
         <label className="flex flex-col gap-1 text-xs text-slate-600">
-          <span>钉钉 UserID</span>
+          <span>手机号 <span className="text-slate-400">（钉钉注册号，自动解析 UserID）</span></span>
+          <input className="input" value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="13800138000" />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-600">
+          <span>钉钉 UserID <span className="text-slate-400">（可选，留空自动解析）</span></span>
           <input className="input" value={userid} onChange={(e) => setUserid(e.target.value)} />
         </label>
         <label className="flex flex-col gap-1 text-xs text-slate-600">

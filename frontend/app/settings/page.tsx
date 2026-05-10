@@ -1,4 +1,5 @@
 // 文件作用：系统信息页（只读，方便排查配置）
+// 版本：v0.2.0 — 增加节假日清单卡片
 // 版本：v0.1.0
 "use client";
 
@@ -9,6 +10,7 @@ export default function SettingsPage() {
   const sys = useQuery({ queryKey: ["sys"], queryFn: api.systemInfo });
   const models = useQuery({ queryKey: ["models"], queryFn: api.models });
   const regions = useQuery({ queryKey: ["regions"], queryFn: api.regions });
+  const holidays = useQuery({ queryKey: ["holidays"], queryFn: api.listHolidays });
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -32,6 +34,33 @@ export default function SettingsPage() {
             ))}
           </ul>
         </div>
+      </Card>
+
+      <Card title="节假日">
+        {holidays.data?.holidays?.length ? (
+          <table className="text-sm w-full">
+            <thead>
+              <tr className="text-xs text-slate-500 border-b border-slate-200">
+                <th className="text-left py-1.5 pr-4 font-normal">名称</th>
+                <th className="text-left py-1.5 pr-4 font-normal">年份</th>
+                <th className="text-left py-1.5 pr-4 font-normal">开始</th>
+                <th className="text-left py-1.5 font-normal">结束</th>
+              </tr>
+            </thead>
+            <tbody>
+              {holidays.data.holidays.map((h) => (
+                <tr key={h.id} className="border-b border-slate-100">
+                  <td className="py-1.5 pr-4">{h.name}</td>
+                  <td className="py-1.5 pr-4 font-mono text-xs text-slate-500">{h.year}</td>
+                  <td className="py-1.5 pr-4 font-mono text-xs">{h.start_date}</td>
+                  <td className="py-1.5 font-mono text-xs">{h.end_date}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="text-xs text-slate-500">暂无节假日数据（holidays 表为空）</div>
+        )}
       </Card>
 
       <Card title="区域映射">

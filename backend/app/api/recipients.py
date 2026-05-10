@@ -1,5 +1,8 @@
 # 文件作用：recipients CRUD API
-# 版本：v0.1.0
+# 版本：v0.2.0 — 保存时若 mobile 有值且 userid 空，自动调钉钉接口解析 userid
+#
+# 解析失败不阻塞保存（钉钉未配 / 手机号未注册 / 网络异常），保存后 userid 留空，
+# 后续手工补或重新保存重试即可。
 
 import json
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.db import get_db
 from app.models.entities import Recipient
+from app.pipeline import dispatcher
 
 router = APIRouter(prefix="/api/recipients", tags=["recipients"])
 
@@ -60,14 +64,24 @@ def list_recipients(db: Session = Depends(get_db)):
     return [_to_out(r) for r in db.query(Recipient).order_by(Recipient.id).all()]
 
 
+def _ensure_userid(userid: str | None, mobile: str | None) -> str | None:
+    """userid 已填则原样返回；否则用 mobile 调钉钉解析。失败返回 None。"""
+    if userid:
+        return userid
+    if mobile:
+        return dispatcher._resolve_userid_by_mobile(mobile)
+    return None
+
+
 @router.post("", response_model=RecipientOut)
 def create_recipient(req: RecipientUpsert, db: Session = Depends(get_db)):
+    resolved_userid = _ensure_userid(req.dingtalk_userid, req.dingtalk_mobile)
     r = Recipient(
         name=req.name,
         role=req.role,
         region_ids=json.dumps(req.region_ids),
         shop_ids=json.dumps(req.shop_ids),
-        dingtalk_userid=req.dingtalk_userid,
+        dingtalk_userid=resolved_userid,
         dingtalk_mobile=req.dingtalk_mobile,
         subscribe_weekly=req.subscribe_weekly,
         subscribe_monthly=req.subscribe_monthly,

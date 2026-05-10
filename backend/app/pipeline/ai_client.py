@@ -1,6 +1,7 @@
 # 文件作用：ModelVerse 多模型 AI 客户端 (OpenAI 协议兼容)
-# 支持 5 个模型 A/B 切换，统一接口返回 (text, usage, latency_ms)
-# 版本：v0.1.0 — 初始化
+# 支持 7 个模型 A/B 切换（含 Gemini 系列），统一接口返回 (text, usage, latency_ms, cost_cny)
+# 版本：v0.2.0 — CompletionResult 加 cost_cny（按 MODEL_PRICING 估算）
+# 版本：v0.1.1 — 加入 gemini-3.1-pro-preview / gemini-2.5-flash
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
-from app.config import SUPPORTED_MODELS, get_settings
+from app.config import SUPPORTED_MODELS, estimate_cost_cny, get_settings
 
 
 @dataclass
@@ -20,6 +21,7 @@ class CompletionResult:
     completion_tokens: int
     total_tokens: int
     latency_ms: int
+    cost_cny: float        # 估算 CNY 成本，未登记模型为 0.0
     raw: dict
 
 
@@ -65,12 +67,15 @@ def complete(
 
     text = resp.choices[0].message.content or ""
     usage = resp.usage
+    pt = usage.prompt_tokens if usage else 0
+    ct = usage.completion_tokens if usage else 0
     return CompletionResult(
         text=text,
         model=model,
-        prompt_tokens=usage.prompt_tokens if usage else 0,
-        completion_tokens=usage.completion_tokens if usage else 0,
+        prompt_tokens=pt,
+        completion_tokens=ct,
         total_tokens=usage.total_tokens if usage else 0,
         latency_ms=latency_ms,
+        cost_cny=estimate_cost_cny(model, pt, ct),
         raw=resp.model_dump(),
     )

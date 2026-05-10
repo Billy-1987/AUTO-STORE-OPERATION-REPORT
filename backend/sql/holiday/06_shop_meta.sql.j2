@@ -1,0 +1,13 @@
+-- 门店元数据：id, name, region_id, opening_time
+-- 应用层会用 REGION_OVERRIDE 覆盖 3079→163, 3066→67
+SELECT s.id AS shop_id,
+       s.name AS shop_name,
+       s.opening_time,
+       s.status,
+       si.region_Id AS region_id,
+       r.name       AS region_name
+FROM bigoffs_sync.b_shop s
+LEFT JOIN bigoffs_sync.shop_info si ON si.shop_id = s.id
+LEFT JOIN bigoffs_sync.region_info r ON r.id = si.region_Id
+WHERE s.id != 3018
+  AND s.status = 1;
